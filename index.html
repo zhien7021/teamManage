@@ -1212,8 +1212,11 @@
             showToast('建立失敗', `編號 ${newAdmin.id} 已存在，請使用不同編號`, 'warning');
             return false;
           }
-          setMembers(prev => [newAdmin, ...prev]);
+          const next = [newAdmin, ...members];
+          setMembers(next);
           setSelectedMemberId(newAdmin.id);
+          try { localStorage.setItem('frc10114_members', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ members: next });
           setIsAddAdminModalOpen(false);
           showToast('管理員建立成功！', `已新增「${newAdmin.name}」為管理員教練`, 'success');
           return true;
@@ -1233,13 +1236,16 @@
             return false;
           }
           const trimmed = newPass.trim();
-          setMembers(prev => prev.map(m => m.id === memberId ? { ...m, password: trimmed } : m));
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, password: trimmed } : m);
+          setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
             setCurrentMember(prev => ({ ...prev, password: trimmed }));
           }
           if (draftMember && draftMember.id === memberId) {
             setDraftMember(prev => ({ ...prev, password: trimmed }));
           }
+          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          syncToCloud({ members: nextMembers });
           showToast('密碼已成功更新！', '請牢記您的新密碼', 'success');
           return true;
         };
@@ -1307,12 +1313,122 @@
             showToast('儲存失敗', '請至少勾選一個組別', 'warning');
             return;
           }
-          setMembers(prev => prev.map(m => m.id === draftMember.id ? draftMember : m));
-          if (currentMember.id === draftMember.id) {
+          const nextMembers = members.map(m =>
+            (m.id === selectedMemberId || m.id === draftMember.id) ? draftMember : m
+          );
+          setMembers(nextMembers);
+          if (currentMember.id === selectedMemberId || currentMember.id === draftMember.id) {
             setCurrentMember(draftMember);
           }
           setSelectedMemberId(draftMember.id);
-          showToast('資料儲存成功', `隊員「${draftMember.name}」已更新`, 'success');
+          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          syncToCloud({ members: nextMembers });
+          showToast('資料儲存成功', `隊員「${draftMember.name}」已更新並即時同步至雲端！`, 'success');
+        };
+
+        const handleUpdateProfile = (updatedProfile) => {
+          if (!updatedProfile.name?.trim()) {
+            showToast('儲存失敗', '姓名不得為空', 'error');
+            return false;
+          }
+          const nextMembers = members.map(m => m.id === updatedProfile.id ? { ...m, ...updatedProfile } : m);
+          setMembers(nextMembers);
+          setCurrentMember(prev => ({ ...prev, ...updatedProfile }));
+          if (draftMember && draftMember.id === updatedProfile.id) {
+            setDraftMember(prev => ({ ...prev, ...updatedProfile }));
+          }
+          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          syncToCloud({ members: nextMembers });
+          showToast('個人資料儲存成功！', '您的資料與理念已即時同步至雲端', 'success');
+          return true;
+        };
+
+        const handleSaveMotto = (memberId, newMotto) => {
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, motto: newMotto } : m);
+          setMembers(nextMembers);
+          if (currentMember.id === memberId) {
+            setCurrentMember(prev => ({ ...prev, motto: newMotto }));
+          }
+          if (draftMember.id === memberId) {
+            setDraftMember(prev => ({ ...prev, motto: newMotto }));
+          }
+          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          syncToCloud({ members: nextMembers });
+          showToast('座右銘已儲存', '隨時提醒自己當初加入 FRC 時的初心！', 'success');
+        };
+
+        // 學習集章 (tasks) - Verify, Add, Delete
+        const handleVerifyTask = (taskId, studentName, taskName) => {
+          const now = new Date();
+          const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          const nextTasks = tasks.map(t => t.id === taskId ? { ...t, status: 'completed', verifiedAt: dateStr, verifiedBy: currentMember.name || '許教練' } : t);
+          setTasks(nextTasks);
+          try { localStorage.setItem('frc10114_tasks', JSON.stringify(nextTasks)); } catch (e) {}
+          syncToCloud({ tasks: nextTasks });
+          showToast('任務審核通過！', `隊員「${studentName}」的「${taskName}」已完成蓋章核可！`, 'success');
+        };
+
+        const handleAddTask = (t) => {
+          const newTask = { ...t, id: Date.now(), status: 'pending' };
+          const nextTasks = [...tasks, newTask];
+          setTasks(nextTasks);
+          try { localStorage.setItem('frc10114_tasks', JSON.stringify(nextTasks)); } catch (e) {}
+          syncToCloud({ tasks: nextTasks });
+          showToast('已指派學習任務', `已建立「${t.taskName}」`, 'success');
+        };
+
+        const handleDeleteTask = (taskId, studentName, taskName) => {
+          if (window.confirm(`確定要刪除隊員「${studentName}」的「${taskName}」學習集章任務嗎？`)) {
+            const nextTasks = tasks.filter(t => t.id !== taskId);
+            setTasks(nextTasks);
+            try { localStorage.setItem('frc10114_tasks', JSON.stringify(nextTasks)); } catch (e) {}
+            syncToCloud({ tasks: nextTasks });
+            showToast('學習集章已刪除', `已移除「${taskName}」(${studentName})`, 'info');
+          }
+        };
+
+        // 工作任務清單 (pendingTasks) - Add, Delete, Toggle
+        const handleAddPendingTask = (newTask) => {
+          const now = new Date();
+          const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const task = {
+            id: `task-${Date.now()}`,
+            title: newTask.title.trim(),
+            department: newTask.department,
+            description: newTask.description?.trim() || '',
+            status: 'todo',
+            createdAt: dateStr,
+          };
+          const next = [task, ...pendingTasks];
+          setPendingTasks(next);
+          try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ pendingTasks: next });
+          showToast('工作任務已建立', `已新增任務「${task.title}」至 ${task.department}`, 'success');
+        };
+
+        const handleDeletePendingTask = (taskId, title) => {
+          if (window.confirm(`確定要刪除工作任務「${title}」嗎？`)) {
+            const next = pendingTasks.filter(t => t.id !== taskId);
+            setPendingTasks(next);
+            try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
+            syncToCloud({ pendingTasks: next });
+            showToast('工作任務已刪除', `已移除「${title}」`, 'info');
+          }
+        };
+
+        const handleTogglePendingTask = (taskId, currentStatus, title) => {
+          const nextStatus = currentStatus === 'todo' ? 'completed' : 'todo';
+          const now = new Date();
+          const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          const next = pendingTasks.map(t => t.id === taskId ? { ...t, status: nextStatus, completedAt: nextStatus === 'completed' ? timeStr : undefined } : t);
+          setPendingTasks(next);
+          try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ pendingTasks: next });
+          if (nextStatus === 'completed') {
+            showToast('任務已標示完成！', `「${title}」已移入已完成區域`, 'success');
+          } else {
+            showToast('任務重設為進行中', `「${title}」已回到待辦項目`, 'info');
+          }
         };
 
         const handleDiscardDraft = () => {
@@ -1323,24 +1439,30 @@
         };
 
         const handleUpdateMemberAvatar = (memberId, avatarDataUrl) => {
-          setMembers(prev => prev.map(m => m.id === memberId ? { ...m, avatar: avatarDataUrl } : m));
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, avatar: avatarDataUrl } : m);
+          setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
             setCurrentMember(prev => ({ ...prev, avatar: avatarDataUrl }));
           }
           if (draftMember && draftMember.id === memberId) {
             setDraftMember(prev => ({ ...prev, avatar: avatarDataUrl }));
           }
+          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          syncToCloud({ members: nextMembers });
           showToast('個人頭貼已更新', '頭貼相片已成功儲存！', 'success');
         };
 
         const handleRemoveMemberAvatar = (memberId) => {
-          setMembers(prev => prev.map(m => m.id === memberId ? { ...m, avatar: undefined } : m));
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, avatar: undefined } : m);
+          setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
             setCurrentMember(prev => ({ ...prev, avatar: undefined }));
           }
           if (draftMember && draftMember.id === memberId) {
             setDraftMember(prev => ({ ...prev, avatar: undefined }));
           }
+          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          syncToCloud({ members: nextMembers });
           showToast('已移除個人頭貼', '已還原為姓氏字母頭像', 'info');
         };
 
@@ -2099,7 +2221,7 @@
                               onClick={handleDiscardDraft}
                               disabled={!isDraftDirty}
                               className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg border transition-all ${
-                                isDraftDirty ? 'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50' : 'bg-zinc-100 border-zinc-200 text-zinc-400 cursor-not-allowed'
+                                isDraftDirty ? 'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50 cursor-pointer' : 'bg-zinc-100 border-zinc-200 text-zinc-400 cursor-not-allowed'
                               }`}
                             >
                               <Icon name="revert" className="w-3.5 h-3.5" />
@@ -2109,13 +2231,13 @@
                             <button
                               type="button"
                               onClick={handleSaveDraft}
-                              disabled={!isDraftDirty}
-                              className={`inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold rounded-lg transition-all shadow-xs ${
-                                isDraftDirty ? 'bg-orange-600 hover:bg-orange-700 text-white' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+                              className={`inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold rounded-lg transition-all shadow-xs cursor-pointer active:scale-95 ${
+                                isDraftDirty ? 'bg-orange-600 hover:bg-orange-700 text-white font-bold ring-2 ring-orange-500/20' : 'bg-zinc-900 hover:bg-zinc-800 text-white'
                               }`}
+                              title="立即儲存隊員資料並同步至雲端資料庫"
                             >
-                              <Icon name="save" className="w-4 h-4" />
-                              <span>儲存正式名冊</span>
+                              <Icon name="save" className={`w-4 h-4 ${isDraftDirty ? 'text-white' : 'text-orange-400'}`} />
+                              <span>{isDraftDirty ? '儲存隊員資料 (有未存變更)' : '儲存正式名冊 (已同步)'}</span>
                             </button>
                           </div>
                         </div>
@@ -2131,33 +2253,36 @@
                   events={sortedEvents}
                   onAddEvent={(ev) => {
                     const newEv = { ...ev, id: Date.now() };
-                    setEvents(prev => [...prev, newEv]);
+                    const next = [...events, newEv];
+                    setEvents(next);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ events: next });
                     showToast('活動發布成功', `「${ev.name}」已排入行事曆並按時序排列`, 'success');
                   }}
                   onDeleteEvent={(id, name) => {
                     if (window.confirm(`確定要刪除「${name}」活動嗎？`)) {
-                      setEvents(prev => prev.filter(e => e.id !== id));
+                      const next = events.filter(e => e.id !== id);
+                      setEvents(next);
+                      try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                      syncToCloud({ events: next });
                       showToast('活動已刪除', `已自隊伍行事曆移除「${name}」`, 'info');
                     }
                   }}
                 />
               )}
 
-              {/* ADMIN VIEW 3: 任務審核 */}
+              {/* ADMIN VIEW 3: 任務審核與工作任務管理 */}
               {currentRole === 'admin' && activeTab === 'tasks' && (
                 <AdminTaskReviewTab
                   tasks={tasks}
+                  pendingTasks={pendingTasks}
                   members={members}
-                  onVerify={(taskId, studentName, taskName) => {
-                    const now = new Date();
-                    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'completed', verifiedAt: dateStr, verifiedBy: '許教練' } : t));
-                    showToast('任務審核通過！', `隊員「${studentName}」的「${taskName}」已完成蓋章核可！`, 'success');
-                  }}
-                  onAddTask={(t) => {
-                    setTasks(prev => [...prev, { ...t, id: Date.now(), status: 'pending' }]);
-                    showToast('已指派學習任務', `已建立「${t.taskName}」`, 'success');
-                  }}
+                  onVerify={handleVerifyTask}
+                  onAddTask={handleAddTask}
+                  onDeleteTask={handleDeleteTask}
+                  onAddPendingTask={handleAddPendingTask}
+                  onDeletePendingTask={handleDeletePendingTask}
+                  onTogglePendingTask={handleTogglePendingTask}
                 />
               )}
 
@@ -2182,10 +2307,16 @@
                   onUpdateEduItem={handleUpdateEduItem}
                   onDeleteEduItem={handleDeleteEduItem}
                   onUpdateQty={(matId, newQty) => {
-                    setMaterials(prev => prev.map(m => m.id === matId ? { ...m, quantity: newQty } : m));
+                    const next = materials.map(m => m.id === matId ? { ...m, quantity: newQty } : m);
+                    setMaterials(next);
+                    try { localStorage.setItem('frc10114_materials', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ materials: next });
                   }}
                   onAddMat={(mat) => {
-                    setMaterials(prev => [...prev, { ...mat, id: `mat-${Date.now()}` }]);
+                    const next = [...materials, { ...mat, id: `mat-${Date.now()}` }];
+                    setMaterials(next);
+                    try { localStorage.setItem('frc10114_materials', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ materials: next });
                     showToast('材料新增成功', `已建立「${mat.name}」庫存`, 'success');
                   }}
                 />
@@ -2202,12 +2333,8 @@
                   member={currentMember}
                   tasks={tasks}
                   events={sortedEvents}
-                  onSaveMotto={(newMotto) => {
-                    const updated = { ...currentMember, motto: newMotto };
-                    setCurrentMember(updated);
-                    setMembers(prev => prev.map(m => m.id === updated.id ? updated : m));
-                    showToast('座右銘已儲存', '隨時提醒自己當初加入 FRC 時的初心！', 'success');
-                  }}
+                  onUpdateProfile={handleUpdateProfile}
+                  onSaveMotto={handleSaveMotto}
                   onUpdateAvatar={handleUpdateMemberAvatar}
                   onRemoveAvatar={handleRemoveMemberAvatar}
                   onUpdatePassword={handleUpdatePassword}
@@ -2222,12 +2349,8 @@
                   member={currentMember}
                   tasks={tasks}
                   events={sortedEvents}
-                  onSaveMotto={(newMotto) => {
-                    const updated = { ...currentMember, motto: newMotto };
-                    setCurrentMember(updated);
-                    setMembers(prev => prev.map(m => m.id === updated.id ? updated : m));
-                    showToast('座右銘已儲存', '隨時提醒自己當初加入 FRC 時的初心！', 'success');
-                  }}
+                  onUpdateProfile={handleUpdateProfile}
+                  onSaveMotto={handleSaveMotto}
                   onUpdateAvatar={handleUpdateMemberAvatar}
                   onRemoveAvatar={handleRemoveMemberAvatar}
                   onUpdatePassword={handleUpdatePassword}
@@ -2244,11 +2367,12 @@
                   savedIds={customSavedEventIds}
                   onToggleSave={(eventId, eventName) => {
                     const exists = customSavedEventIds.includes(eventId);
+                    const next = exists ? customSavedEventIds.filter(x => x !== eventId) : [...customSavedEventIds, eventId];
+                    setCustomSavedEventIds(next);
+                    try { localStorage.setItem('frc10114_saved_events', JSON.stringify(next)); } catch (e) {}
                     if (exists) {
-                      setCustomSavedEventIds(prev => prev.filter(x => x !== eventId));
                       showToast('已自個人行程移除', `「${eventName}」已移出個人行事曆`, 'info');
                     } else {
-                      setCustomSavedEventIds(prev => [...prev, eventId]);
                       showToast('已加入個人行事曆', `「${eventName}」已納入專屬時程與即將到來提醒！`, 'success');
                     }
                   }}
@@ -2269,7 +2393,10 @@
                       department: dept,
                       status: 'pending',
                     };
-                    setTasks(prev => [...prev, newT]);
+                    const next = [...tasks, newT];
+                    setTasks(next);
+                    try { localStorage.setItem('frc10114_tasks', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ tasks: next });
                     showToast('已送出驗收申請', `「${taskName}」已登錄，請找管理員教練進行技術檢核蓋章！`, 'success');
                   }}
                 />
@@ -2280,17 +2407,9 @@
                 <MemberTasksTab
                   member={currentMember}
                   tasks={pendingTasks}
-                  onToggleTask={(taskId, currentStatus, title) => {
-                    const next = currentStatus === 'todo' ? 'completed' : 'todo';
-                    const now = new Date();
-                    const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                    setPendingTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: next, completedAt: next === 'completed' ? timeStr : undefined } : t));
-                    if (next === 'completed') {
-                      showToast('任務已標示完成！', `「${title}」已移入已完成區域`, 'success');
-                    } else {
-                      showToast('任務重設為進行中', `「${title}」已回到待辦項目`, 'info');
-                    }
-                  }}
+                  onToggleTask={handleTogglePendingTask}
+                  onDeleteTask={handleDeletePendingTask}
+                  isAdmin={currentRole === 'admin'}
                 />
               )}
 
@@ -4839,162 +4958,449 @@
         );
       }
 
-      function AdminTaskReviewTab({ tasks, members, onVerify, onAddTask }) {
-        const [isAddOpen, setIsAddOpen] = useState(false);
-        const [studentId, setStudentId] = useState(members[1]?.id || members[0]?.id);
+      function AdminTaskReviewTab({
+        tasks = [],
+        pendingTasks = [],
+        members = [],
+        onVerify,
+        onAddTask,
+        onDeleteTask,
+        onAddPendingTask,
+        onDeletePendingTask,
+        onTogglePendingTask
+      }) {
+        const [activeModule, setActiveModule] = useState('stamps'); // 'stamps' | 'work'
+
+        // --- 1. 學習集章 State ---
+        const [isAddStampOpen, setIsAddStampOpen] = useState(false);
+        const [studentId, setStudentId] = useState(members[1]?.id || members[0]?.id || '');
         const [taskName, setTaskName] = useState('');
         const [dept, setDept] = useState('機電整合組');
-        const [filter, setFilter] = useState('all');
+        const [stampFilter, setStampFilter] = useState('all');
 
-        const filtered = tasks.filter(t => {
-          if (filter === 'pending') return t.status === 'pending';
-          if (filter === 'completed') return t.status === 'completed';
+        const filteredStamps = tasks.filter(t => {
+          if (stampFilter === 'pending') return t.status === 'pending';
+          if (stampFilter === 'completed') return t.status === 'completed';
           return true;
         });
 
-        const handleAdd = (e) => {
+        const handleAddStamp = (e) => {
           e.preventDefault();
           if (!taskName.trim()) return;
-          const stu = members.find(m => m.id === studentId);
-          onAddTask({ studentId: stu.id, studentName: stu.name, taskName: taskName.trim(), department: dept });
-          setIsAddOpen(false);
+          const stu = members.find(m => m.id === studentId) || members[0];
+          if (!stu) return;
+          if (onAddTask) {
+            onAddTask({ studentId: stu.id, studentName: stu.name, taskName: taskName.trim(), department: dept });
+          }
+          setIsAddStampOpen(false);
           setTaskName('');
         };
 
+        // --- 2. 工作任務清單 State ---
+        const [isAddWorkOpen, setIsAddWorkOpen] = useState(false);
+        const [workTitle, setWorkTitle] = useState('');
+        const [workDept, setWorkDept] = useState('機電整合組');
+        const [workDesc, setWorkDesc] = useState('');
+        const [workFilter, setWorkFilter] = useState('all');
+        const [workDeptFilter, setWorkDeptFilter] = useState('all');
+
+        const filteredWorkTasks = pendingTasks.filter(t => {
+          if (workFilter === 'todo' && t.status !== 'todo') return false;
+          if (workFilter === 'completed' && t.status !== 'completed') return false;
+          if (workDeptFilter !== 'all' && t.department !== workDeptFilter) return false;
+          return true;
+        });
+
+        const handleAddWork = (e) => {
+          e.preventDefault();
+          if (!workTitle.trim()) return;
+          if (onAddPendingTask) {
+            onAddPendingTask({
+              title: workTitle.trim(),
+              department: workDept,
+              description: workDesc.trim(),
+            });
+          }
+          setIsAddWorkOpen(false);
+          setWorkTitle('');
+          setWorkDesc('');
+        };
+
+        const pendingStampCount = tasks.filter(t => t.status === 'pending').length;
+        const pendingWorkCount = pendingTasks.filter(t => t.status === 'todo').length;
+
         return (
           <div className="space-y-6">
+            {/* Top Control Banner with Dual Sub-Tabs */}
             <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-1.5 text-xs font-bold text-orange-600 uppercase mb-1">
                   <Icon name="checkSquare" className="w-3.5 h-3.5" />
-                  <span>Learning Task Stamp Verification</span>
+                  <span>Tasks & Milestone Management</span>
                 </div>
-                <h2 className="text-xl font-black text-zinc-900">學習任務審核與集章</h2>
+                <h2 className="text-xl font-black text-zinc-900">任務管理與審核中心</h2>
                 <p className="text-xs text-zinc-500 mt-1">
-                  隊員研習後找管理員驗收，管理者點擊核准即可完成蓋章核可，即時同步顯示於該隊員個人介面。
+                  管理員可在此切換「學習任務審核與集章」或「組別工作任務清單」，具備完整新增、審核、標記與刪除權限。
                 </p>
               </div>
 
-              <button
-                onClick={() => setIsAddOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs"
-              >
-                <Icon name="plus" className="w-4 h-4" />
-                <span>指派新學習任務</span>
-              </button>
+              {/* Sub-Tab Navigation Switcher */}
+              <div className="flex items-center bg-zinc-100 p-1.5 rounded-xl border border-zinc-200 self-start md:self-auto text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('stamps')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
+                    activeModule === 'stamps'
+                      ? 'bg-zinc-900 text-white shadow-xs'
+                      : 'text-zinc-600 hover:text-zinc-900'
+                  }`}
+                >
+                  <Icon name="award" className="w-4 h-4 text-orange-400" />
+                  <span>學習集章審核 ({tasks.length})</span>
+                  {pendingStampCount > 0 && (
+                    <span className="px-1.5 py-0.5 text-[10px] bg-orange-600 text-white rounded-full font-extrabold animate-pulse">
+                      {pendingStampCount} 待審
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('work')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
+                    activeModule === 'work'
+                      ? 'bg-zinc-900 text-white shadow-xs'
+                      : 'text-zinc-600 hover:text-zinc-900'
+                  }`}
+                >
+                  <Icon name="checkSquare" className="w-4 h-4 text-orange-400" />
+                  <span>組別工作任務 ({pendingTasks.length})</span>
+                  {pendingWorkCount > 0 && (
+                    <span className="px-1.5 py-0.5 text-[10px] bg-zinc-700 text-orange-300 rounded-full font-bold">
+                      {pendingWorkCount} 待辦
+                    </span>
+                  )}
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 bg-white p-2 border border-zinc-200 rounded-xl text-xs">
-              <button
-                onClick={() => setFilter('all')}
-                className={`px-3 py-1.5 rounded-lg font-bold ${filter === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
-              >
-                全部任務 ({tasks.length})
-              </button>
-              <button
-                onClick={() => setFilter('pending')}
-                className={`px-3 py-1.5 rounded-lg font-bold ${filter === 'pending' ? 'bg-orange-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
-              >
-                待審核 ({tasks.filter(t => t.status === 'pending').length})
-              </button>
-              <button
-                onClick={() => setFilter('completed')}
-                className={`px-3 py-1.5 rounded-lg font-bold ${filter === 'completed' ? 'bg-emerald-700 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
-              >
-                已蓋章通過 ({tasks.filter(t => t.status === 'completed').length})
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filtered.map(task => {
-                const isDone = task.status === 'completed';
-                return (
-                  <div
-                    key={task.id}
-                    className={`bg-white border rounded-xl p-5 shadow-xs transition-all relative overflow-hidden flex flex-col justify-between ${
-                      isDone ? 'border-zinc-200' : 'border-orange-300 bg-orange-50/15'
-                    }`}
-                  >
-                    {isDone && (
-                      <div className="absolute -right-2 -bottom-2 pointer-events-none rotate-[-12deg] select-none z-10">
-                        <div className="border-2 border-dashed border-emerald-600 text-emerald-700 rounded-lg px-3 py-1 text-center font-mono font-black text-xs uppercase bg-emerald-50/95 shadow-xs">
-                          <div>★ FRC 10114 ★</div>
-                          <div className="text-sm font-black">PASSED 核可</div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-zinc-100 text-zinc-700 border border-zinc-200">
-                          {task.department}
-                        </span>
-                        {isDone ? (
-                          <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                            ✓ 已完成驗收
-                          </span>
-                        ) : (
-                          <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 animate-pulse">
-                            待教練審核
-                          </span>
-                        )}
-                      </div>
-
-                      <div>
-                        <h4 className="text-base font-extrabold text-zinc-900 tracking-tight">{task.taskName}</h4>
-                        <p className="text-xs text-zinc-500 mt-1">
-                          隊員：<span className="font-bold text-zinc-800">{task.studentName}</span> ({task.studentId})
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-5 pt-3 border-t border-zinc-100 flex items-center justify-between text-xs">
-                      {isDone ? (
-                        <span className="text-[11px] text-zinc-400">
-                          核章時間：{task.verifiedAt} ({task.verifiedBy || '教練'})
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => onVerify(task.id, task.studentName, task.taskName)}
-                          className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-all hover:scale-[1.02]"
-                        >
-                          <Icon name="award" className="w-3.5 h-3.5" />
-                          <span>審核通過 (蓋章)</span>
-                        </button>
-                      )}
-                    </div>
+            {/* ======================================================== */}
+            {/* MODULE 1: 學習任務審核與集章 (tasks)                     */}
+            {/* ======================================================== */}
+            {activeModule === 'stamps' && (
+              <div className="space-y-4">
+                {/* Actions & Filters Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 border border-zinc-200 rounded-xl">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setStampFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        stampFilter === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+                      }`}
+                    >
+                      全部任務 ({tasks.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStampFilter('pending')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        stampFilter === 'pending' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                      }`}
+                    >
+                      待審核 ({pendingStampCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStampFilter('completed')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        stampFilter === 'completed' ? 'bg-emerald-700 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                      }`}
+                    >
+                      已蓋章通過 ({tasks.filter(t => t.status === 'completed').length})
+                    </button>
                   </div>
-                );
-              })}
-            </div>
 
-            {isAddOpen && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddStampOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors self-start sm:self-auto"
+                  >
+                    <Icon name="plus" className="w-4 h-4" />
+                    <span>指派新學習集章任務</span>
+                  </button>
+                </div>
+
+                {/* Stamps Grid */}
+                {filteredStamps.length === 0 ? (
+                  <div className="bg-white border border-dashed border-zinc-300 rounded-xl p-8 text-center text-zinc-400 text-xs">
+                    目前此分類下暫無任何學習集章任務項目
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filteredStamps.map(task => {
+                      const isDone = task.status === 'completed';
+                      return (
+                        <div
+                          key={task.id}
+                          className={`bg-white border rounded-xl p-5 shadow-xs transition-all relative overflow-hidden flex flex-col justify-between ${
+                            isDone ? 'border-zinc-200' : 'border-orange-300 bg-orange-50/15'
+                          }`}
+                        >
+                          {isDone && (
+                            <div className="absolute -right-2 -bottom-2 pointer-events-none rotate-[-12deg] select-none z-10">
+                              <div className="border-2 border-dashed border-emerald-600 text-emerald-700 rounded-lg px-3 py-1 text-center font-mono font-black text-xs uppercase bg-emerald-50/95 shadow-xs">
+                                <div>★ FRC 10114 ★</div>
+                                <div className="text-sm font-black">PASSED 核可</div>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                {task.department}
+                              </span>
+                              {isDone ? (
+                                <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                  ✓ 已完成驗收蓋章
+                                </span>
+                              ) : (
+                                <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 animate-pulse">
+                                  待教練審核
+                                </span>
+                              )}
+                            </div>
+
+                            <div>
+                              <h4 className="text-base font-extrabold text-zinc-900 tracking-tight">{task.taskName}</h4>
+                              <p className="text-xs text-zinc-500 mt-1">
+                                指定隊員：<span className="font-bold text-zinc-800">{task.studentName}</span> ({task.studentId})
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-5 pt-3 border-t border-zinc-100 flex items-center justify-between text-xs gap-2">
+                            <div>
+                              {isDone ? (
+                                <span className="text-[11px] text-zinc-400 font-mono">
+                                  核章：{task.verifiedAt} ({task.verifiedBy || '教練'})
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => onVerify && onVerify(task.id, task.studentName, task.taskName)}
+                                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-all active:scale-95"
+                                >
+                                  <Icon name="award" className="w-3.5 h-3.5" />
+                                  <span>審核通過 (蓋章)</span>
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Delete Learning Stamp Button (Admin Capability) */}
+                            <button
+                              type="button"
+                              onClick={() => onDeleteTask && onDeleteTask(task.id, task.studentName, task.taskName)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg font-semibold border border-red-200 transition-colors"
+                              title="刪除此集章任務"
+                            >
+                              <Icon name="trash" className="w-3.5 h-3.5" />
+                              <span>刪除集章</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ======================================================== */}
+            {/* MODULE 2: 組別工作任務清單 (pendingTasks)               */}
+            {/* ======================================================== */}
+            {activeModule === 'work' && (
+              <div className="space-y-4">
+                {/* Actions & Filters Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 border border-zinc-200 rounded-xl">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setWorkFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        workFilter === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+                      }`}
+                    >
+                      全部工作 ({pendingTasks.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWorkFilter('todo')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        workFilter === 'todo' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                      }`}
+                    >
+                      待完成 ({pendingWorkCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWorkFilter('completed')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        workFilter === 'completed' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                      }`}
+                    >
+                      已完成 ({pendingTasks.filter(t => t.status === 'completed').length})
+                    </button>
+
+                    <span className="text-zinc-300">|</span>
+
+                    {/* Department filter */}
+                    <select
+                      value={workDeptFilter}
+                      onChange={(e) => setWorkDeptFilter(e.target.value)}
+                      className="px-2 py-1 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-700 bg-zinc-50"
+                    >
+                      <option value="all">全部組別</option>
+                      <option value="機電整合組">機電整合組</option>
+                      <option value="程式控制組">程式控制組</option>
+                      <option value="行銷管理組">行銷管理組</option>
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsAddWorkOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors self-start sm:self-auto"
+                  >
+                    <Icon name="plus" className="w-4 h-4" />
+                    <span>新增工作任務</span>
+                  </button>
+                </div>
+
+                {/* Work Tasks List */}
+                {filteredWorkTasks.length === 0 ? (
+                  <div className="bg-white border border-dashed border-zinc-300 rounded-xl p-8 text-center text-zinc-400 text-xs">
+                    目前所選分類下暫無工作任務項目
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredWorkTasks.map(t => {
+                      const isDone = t.status === 'completed';
+                      return (
+                        <div
+                          key={t.id}
+                          className={`bg-white border rounded-xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
+                            isDone ? 'border-zinc-200 opacity-80' : 'border-zinc-200 hover:border-orange-300'
+                          }`}
+                        >
+                          <div className="space-y-1.5 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2.5 py-0.5 bg-zinc-100 text-zinc-700 rounded text-[10px] font-bold border border-zinc-200">
+                                {t.department}
+                              </span>
+                              {isDone ? (
+                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                  ✓ 已完成
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-200">
+                                  進行中
+                                </span>
+                              )}
+                              {t.createdAt && (
+                                <span className="text-[10px] text-zinc-400 font-mono">
+                                  建立於：{t.createdAt}
+                                </span>
+                              )}
+                            </div>
+                            <h4 className={`text-base font-extrabold ${isDone ? 'line-through text-zinc-400' : 'text-zinc-900'}`}>
+                              {t.title}
+                            </h4>
+                            {t.description && <p className="text-xs text-zinc-500">{t.description}</p>}
+                            {isDone && t.completedAt && (
+                              <p className="text-[10px] text-zinc-400 font-mono">
+                                完成時間：{t.completedAt}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 self-end sm:self-center">
+                            {/* Toggle completed button */}
+                            <button
+                              type="button"
+                              onClick={() => onTogglePendingTask && onTogglePendingTask(t.id, t.status, t.title)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                isDone
+                                  ? 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border border-zinc-200'
+                                  : 'bg-zinc-900 text-white hover:bg-zinc-800'
+                              }`}
+                            >
+                              {isDone ? '標記為未完成' : '點擊標示完成'}
+                            </button>
+
+                            {/* Delete Work Task Button (Admin Capability) */}
+                            <button
+                              type="button"
+                              onClick={() => onDeletePendingTask && onDeletePendingTask(t.id, t.title)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg font-semibold border border-red-200 transition-colors"
+                              title="刪除此工作任務"
+                            >
+                              <Icon name="trash" className="w-3.5 h-3.5" />
+                              <span>刪除任務</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Modal 1: 指派新學習集章任務 */}
+            {isAddStampOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
                 <div className="bg-white border border-zinc-200 w-full max-w-md rounded-2xl shadow-2xl p-6 overflow-hidden">
-                  <h3 className="text-base font-bold text-zinc-900 mb-1">指派技能考核任務</h3>
-                  <p className="text-xs text-zinc-500 mb-4">隊員完成自主研習後找管理員驗收</p>
+                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-zinc-900">指派技能考核與學習集章</h3>
+                      <p className="text-xs text-zinc-500">指派後隊員可在個人學習頁面檢視並提出驗收</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddStampOpen(false)}
+                      className="p-1 rounded-lg text-zinc-400 hover:bg-zinc-100"
+                    >
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
 
-                  <form onSubmit={handleAdd} className="space-y-4">
+                  <form onSubmit={handleAddStamp} className="space-y-4">
                     <div>
                       <label className="block text-xs font-bold text-zinc-700 mb-1">指定隊員 *</label>
                       <select
                         value={studentId}
                         onChange={(e) => setStudentId(e.target.value)}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       >
-                        {members.map(m => <option key={m.id} value={m.id}>{m.name} ({m.id})</option>)}
+                        {members.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.name} ({m.id}) - {m.departments.join('/')}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-1">任務名稱 *</label>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">學習任務名稱 *</label>
                       <input
                         type="text"
                         required
                         value={taskName}
                         onChange={(e) => setTaskName(e.target.value)}
-                        placeholder="例如：3D 列印機操作考核"
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs"
+                        placeholder="例如：3D 列印切片軟體參數設定考核"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
 
@@ -5003,7 +5409,7 @@
                       <select
                         value={dept}
                         onChange={(e) => setDept(e.target.value)}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       >
                         <option value="機電整合組">機電整合組</option>
                         <option value="程式控制組">程式控制組</option>
@@ -5014,16 +5420,91 @@
                     <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
                       <button
                         type="button"
-                        onClick={() => setIsAddOpen(false)}
-                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs"
+                        onClick={() => setIsAddStampOpen(false)}
+                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-semibold hover:bg-zinc-50"
                       >
                         取消
                       </button>
                       <button
                         type="submit"
-                        className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold"
+                        className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs"
                       >
-                        建立任務
+                        建立學習集章
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Modal 2: 新增組別工作任務 */}
+            {isAddWorkOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+                <div className="bg-white border border-zinc-200 w-full max-w-md rounded-2xl shadow-2xl p-6 overflow-hidden">
+                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-zinc-900">新增組別工作任務</h3>
+                      <p className="text-xs text-zinc-500">發布任務至組別清單，全員可隨時協同標記完成</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddWorkOpen(false)}
+                      className="p-1 rounded-lg text-zinc-400 hover:bg-zinc-100"
+                    >
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleAddWork} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">所屬組別 *</label>
+                      <select
+                        value={workDept}
+                        onChange={(e) => setWorkDept(e.target.value)}
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      >
+                        <option value="機電整合組">機電整合組</option>
+                        <option value="程式控制組">程式控制組</option>
+                        <option value="行銷管理組">行銷管理組</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">任務工作名稱 *</label>
+                      <input
+                        type="text"
+                        required
+                        value={workTitle}
+                        onChange={(e) => setWorkTitle(e.target.value)}
+                        placeholder="例如：底盤傳動齒輪箱組裝與上油"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">任務詳細說明 (選填)</label>
+                      <textarea
+                        rows={3}
+                        value={workDesc}
+                        onChange={(e) => setWorkDesc(e.target.value)}
+                        placeholder="填寫任務細節、注意事項或驗收標準..."
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
+                      <button
+                        type="button"
+                        onClick={() => setIsAddWorkOpen(false)}
+                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-semibold hover:bg-zinc-50"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs"
+                      >
+                        發布工作任務
                       </button>
                     </div>
                   </form>
@@ -5177,6 +5658,7 @@
         member,
         tasks,
         events,
+        onUpdateProfile,
         onSaveMotto,
         onUpdateAvatar,
         onRemoveAvatar,
@@ -5187,6 +5669,61 @@
         const [motto, setMotto] = useState(member.motto || '');
         const [isEditing, setIsEditing] = useState(false);
         const fileInputRef = React.useRef(null);
+
+        // Edit Profile modal state
+        const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+        const [editName, setEditName] = useState(member.name || '');
+        const [editPhone, setEditPhone] = useState(member.phone || '');
+        const [editEmail, setEditEmail] = useState(member.email || '');
+        const [editMotto, setEditMotto] = useState(member.motto || '');
+        const [editDepartments, setEditDepartments] = useState(member.departments || ['機電整合組']);
+
+        useEffect(() => {
+          setEditName(member.name || '');
+          setEditPhone(member.phone || '');
+          setEditEmail(member.email || '');
+          setEditMotto(member.motto || '');
+          setEditDepartments(member.departments || ['機電整合組']);
+        }, [member.id, member.name, member.phone, member.email, member.motto, member.departments]);
+
+        const toggleEditDept = (deptName) => {
+          setEditDepartments(prev => {
+            if (prev.includes(deptName)) {
+              if (prev.length === 1) {
+                alert('隊員至少需保留一個所屬組別！');
+                return prev;
+              }
+              return prev.filter(d => d !== deptName);
+            } else {
+              return [...prev, deptName];
+            }
+          });
+        };
+
+        const handleSaveProfileForm = (e) => {
+          e.preventDefault();
+          if (!editName.trim()) {
+            alert('姓名不得為空');
+            return;
+          }
+          if (editDepartments.length === 0) {
+            alert('請至少勾選一個組別');
+            return;
+          }
+          if (onUpdateProfile) {
+            const ok = onUpdateProfile({
+              id: member.id,
+              name: editName.trim(),
+              phone: editPhone.trim(),
+              email: editEmail.trim(),
+              motto: editMotto.trim(),
+              departments: editDepartments,
+            });
+            if (ok) {
+              setIsEditProfileOpen(false);
+            }
+          }
+        };
 
         // Password change form state
         const [oldPass, setOldPass] = useState('');
@@ -5334,8 +5871,20 @@
                         <span>教練管理員</span>
                       </span>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setIsEditProfileOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                      title="編輯姓名、電話、信箱、所屬組別與座右銘"
+                    >
+                      <Icon name="edit" className="w-3.5 h-3.5" />
+                      <span>編輯個人資料</span>
+                    </button>
                   </div>
                   <p className="text-xs text-zinc-400 font-mono">{member.email}</p>
+                  {member.phone && (
+                    <p className="text-xs text-zinc-500 font-mono">聯絡電話：{member.phone}</p>
+                  )}
                   <div className="flex flex-wrap gap-1.5 pt-1">
                     {member.departments.map(d => (
                       <span key={d} className="px-2.5 py-0.5 bg-orange-600 text-white text-xs font-bold rounded shadow-2xs">
@@ -5630,6 +6179,120 @@
                 </div>
               )}
             </div>
+
+            {/* Modal: 編輯個人資料 */}
+            {isEditProfileOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+                <div className="bg-white border border-zinc-200 w-full max-w-md rounded-2xl shadow-2xl p-6 overflow-hidden">
+                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 bg-orange-50 text-orange-600 rounded-lg">
+                        <Icon name="edit" className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-zinc-900">編輯個人資料</h3>
+                        <p className="text-xs text-zinc-500">修改後即時同步更新至雲端名冊與全隊資料庫</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditProfileOpen(false)}
+                      className="p-1 rounded-lg text-zinc-400 hover:bg-zinc-100"
+                    >
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveProfileForm} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">姓名 *</label>
+                      <input
+                        type="text"
+                        required
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        placeholder="請輸入姓名"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">聯絡電話</label>
+                        <input
+                          type="tel"
+                          value={editPhone}
+                          onChange={(e) => setEditPhone(e.target.value)}
+                          placeholder="例如：0912-345-678"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">電子郵件</label>
+                        <input
+                          type="email"
+                          value={editEmail}
+                          onChange={(e) => setEditEmail(e.target.value)}
+                          placeholder="例如：student@frc10114.org"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">所屬組別 (至少選一組) *</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['機電整合組', '程式控制組', '行銷管理組'].map(deptName => {
+                          const checked = editDepartments.includes(deptName);
+                          return (
+                            <button
+                              key={deptName}
+                              type="button"
+                              onClick={() => toggleEditDept(deptName)}
+                              className={`p-2 rounded-lg border text-xs font-bold transition-all text-center cursor-pointer ${
+                                checked
+                                  ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-2xs'
+                                  : 'bg-zinc-50 border-zinc-200 text-zinc-500 hover:bg-zinc-100'
+                              }`}
+                            >
+                              {checked ? '✓ ' : ''}{deptName}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">給自己的一句話 (座右銘)</label>
+                      <input
+                        type="text"
+                        value={editMotto}
+                        onChange={(e) => setEditMotto(e.target.value)}
+                        placeholder="寫下加入校隊的熱忱與座右銘..."
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditProfileOpen(false)}
+                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-semibold hover:bg-zinc-50 cursor-pointer"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="submit"
+                        className="inline-flex items-center gap-1.5 px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs active:scale-95 cursor-pointer"
+                      >
+                        <Icon name="save" className="w-3.5 h-3.5" />
+                        <span>儲存個人資料</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
         );
       }
