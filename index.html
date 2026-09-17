@@ -802,6 +802,7 @@
           shieldCheck: <g><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><polyline points="9 12 11 14 15 10" /></g>,
           home: <g><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></g>,
           menu: <g><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></g>,
+          logout: <g><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" /></g>,
           x: <g><line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" /></g>
         };
         return (
@@ -960,12 +961,48 @@
         });
 
         // Authentication & View
-        const [currentRole, setCurrentRole] = useState('admin');
-        const [currentMember, setCurrentMember] = useState(members[0]);
-        const [parentStudentName, setParentStudentName] = useState('林恩萱');
+        const [isAuthenticated, setIsAuthenticated] = useState(() => {
+          try {
+            return sessionStorage.getItem('frc10114_logged_in') === 'true';
+          } catch (e) {
+            return false;
+          }
+        });
+        const [currentRole, setCurrentRole] = useState(() => {
+          try {
+            const r = sessionStorage.getItem('frc10114_role');
+            if (r === 'admin' || r === 'member' || r === 'parent') return r;
+          } catch (e) {}
+          return 'admin';
+        });
+        const [currentMember, setCurrentMember] = useState(() => {
+          try {
+            const memId = sessionStorage.getItem('frc10114_member_id');
+            if (memId) {
+              const found = members.find(m => m.id === memId);
+              if (found) return found;
+            }
+          } catch (e) {}
+          return members[0];
+        });
+        const [parentStudentName, setParentStudentName] = useState(() => {
+          try {
+            const p = sessionStorage.getItem('frc10114_parent_student');
+            if (p) return p;
+          } catch (e) {}
+          return '林恩萱';
+        });
         const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
         const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-        const [activeTab, setActiveTab] = useState('members');
+        const [activeTab, setActiveTab] = useState(() => {
+          try {
+            const r = sessionStorage.getItem('frc10114_role');
+            if (r === 'member') return 'profile';
+            if (r === 'parent') return 'portal';
+            if (r === 'admin') return 'members';
+          } catch (e) {}
+          return 'members';
+        });
 
         // Firebase Cloud Sync State
         const [firebaseConfig, setFirebaseConfig] = useState(getSavedFirebaseConfig);
@@ -973,6 +1010,24 @@
         const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
         const [isSyncingCloud, setIsSyncingCloud] = useState(false);
         const clientIdRef = React.useRef(Math.random().toString(36).substring(2, 9));
+        const isRemoteUpdateRef = React.useRef(false);
+
+        // Auto-detect shared public/firebase-config.json for seamless zero-config cloud sync
+        useEffect(() => {
+          if (!firebaseConfig) {
+            fetch('./firebase-config.json')
+              .then(res => res.ok ? res.json() : null)
+              .then(cfg => {
+                if (cfg && cfg.apiKey && cfg.projectId) {
+                  setFirebaseConfig(cfg);
+                  try {
+                    localStorage.setItem('frc10114_firebase_config', JSON.stringify(cfg));
+                  } catch (e) {}
+                }
+              })
+              .catch(() => {});
+          }
+        }, [firebaseConfig]);
 
         // Add Admin Modal State
         const [isAddAdminModalOpen, setIsAddAdminModalOpen] = useState(false);
@@ -1024,6 +1079,7 @@
               if (doc.exists) {
                 const data = doc.data();
                 if (data && data.updatedBy !== clientIdRef.current) {
+                  isRemoteUpdateRef.current = true;
                   if (data.members && Array.isArray(data.members)) setMembers(data.members);
                   if (data.events && Array.isArray(data.events)) setEvents(data.events);
                   if (data.tasks && Array.isArray(data.tasks)) setTasks(data.tasks);
@@ -1077,8 +1133,12 @@
           }
         };
 
-        // Debounced auto sync to Firebase when connected
+        // Debounced auto sync to Firebase when connected (prevents echo loops)
         useEffect(() => {
+          if (isRemoteUpdateRef.current) {
+            isRemoteUpdateRef.current = false;
+            return;
+          }
           if (isFirebaseConnected && firebaseConfig) {
             const timer = setTimeout(() => {
               syncToCloud();
@@ -1173,26 +1233,47 @@
           return true;
         };
 
-        // Role select handler
+        // Role select & login handler
         const handleLoginSelect = (role, memberObj, studentName) => {
           setCurrentRole(role);
+          setIsAuthenticated(true);
+          try {
+            sessionStorage.setItem('frc10114_logged_in', 'true');
+            sessionStorage.setItem('frc10114_role', role);
+          } catch (e) {}
+
           if (role === 'admin') {
-            const admin = members.find(m => m.id === '10114-001') || members[0];
+            const admin = memberObj || members.find(m => m.id === '10114-001') || members[0];
             setCurrentMember(admin);
             setActiveTab('members');
+            try { sessionStorage.setItem('frc10114_member_id', admin.id); } catch (e) {}
             showToast('歡迎管理員教練', '已進入 FRC 10114 管理後台', 'success');
           } else if (role === 'member') {
             const m = memberObj || members.find(x => x.id === '10114-002') || members[0];
             setCurrentMember(m);
             setActiveTab('profile');
-            showToast(`歡迎隊員 ${m.name}`, `所屬：${m.departments.join(' / ')}`, 'success');
+            try { sessionStorage.setItem('frc10114_member_id', m.id); } catch (e) {}
+            showToast(`歡迎隊員 ${m.name}`, `已進入個人專屬頁面 (所屬：${m.departments.join(' / ')})`, 'success');
           } else if (role === 'parent') {
             const name = studentName || '林恩萱';
             setParentStudentName(name);
             setActiveTab('portal');
+            try { sessionStorage.setItem('frc10114_parent_student', name); } catch (e) {}
             showToast('家長關心專區已就緒', `歡迎關心 ${name} 的留校實作進度`, 'info');
           }
           setIsLoginModalOpen(false);
+        };
+
+        // Logout handler (resets authentication and returns to login screen)
+        const handleLogout = () => {
+          setIsAuthenticated(false);
+          try {
+            sessionStorage.removeItem('frc10114_logged_in');
+            sessionStorage.removeItem('frc10114_role');
+            sessionStorage.removeItem('frc10114_member_id');
+            sessionStorage.removeItem('frc10114_parent_student');
+          } catch (e) {}
+          showToast('已登出系統', '感謝使用 FRC 10114 隊務系統，歡迎隨時登入', 'info');
         };
 
         // Switch member with unsaved warning
@@ -1448,6 +1529,17 @@
           showToast('設備已刪除', `已移除「${itemName}」`, 'info');
         };
 
+        // Mandatory Login Gate: unauthenticated users see the Login Portal only
+        if (!isAuthenticated) {
+          return (
+            <RoleLoginModal
+              members={members}
+              isPageMode={true}
+              onSelectRole={handleLoginSelect}
+            />
+          );
+        }
+
         return (
           <div className="min-h-screen flex flex-col bg-[#fafafa]">
             {/* --- TOP NAVBAR --- */}
@@ -1500,30 +1592,32 @@
                     )}
                   </div>
 
-                  {/* Cloud Database Sync Status Badge */}
-                  <button
-                    onClick={() => setIsFirebaseModalOpen(true)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg border shadow-2xs transition-all ${
-                      isFirebaseConnected
-                        ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
-                        : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
-                    }`}
-                    title={isFirebaseConnected ? 'Firebase 雲端即時同步中 (點擊開啟設定)' : '目前為本機模式 (點擊串接 Firebase 雲端資料庫)'}
-                  >
-                    {isFirebaseConnected ? (
-                      <>
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
-                        <span className="hidden sm:inline">雲端同步中</span>
-                        <span className="sm:hidden">雲端</span>
-                      </>
-                    ) : (
-                      <>
-                        <Icon name="cloud" className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
-                        <span className="hidden sm:inline">本機模式</span>
-                        <span className="sm:hidden">本機</span>
-                      </>
-                    )}
-                  </button>
+                  {/* Cloud Database Sync Status Badge (Admin Only) */}
+                  {currentRole === 'admin' && (
+                    <button
+                      onClick={() => setIsFirebaseModalOpen(true)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg border shadow-2xs transition-all ${
+                        isFirebaseConnected
+                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                          : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
+                      }`}
+                      title={isFirebaseConnected ? 'Firebase 雲端即時同步中 (點擊開啟設定)' : '目前為本機模式 (點擊串接 Firebase 雲端資料庫)'}
+                    >
+                      {isFirebaseConnected ? (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                          <span className="hidden sm:inline">雲端同步中</span>
+                          <span className="sm:hidden">雲端</span>
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="cloud" className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                          <span className="hidden sm:inline">本機模式</span>
+                          <span className="sm:hidden">本機</span>
+                        </>
+                      )}
+                    </button>
+                  )}
 
                   <button
                     onClick={() => setIsExportModalOpen(true)}
@@ -1535,10 +1629,12 @@
                   </button>
 
                   <button
-                    onClick={() => setIsLoginModalOpen(true)}
-                    className="px-3 py-1.5 text-xs font-semibold text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-50 rounded-lg shadow-2xs transition-colors"
+                    onClick={handleLogout}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-lg shadow-2xs transition-colors"
+                    title="登出目前身分並返回登入入口"
                   >
-                    切換身分
+                    <Icon name="logout" className="w-3.5 h-3.5 text-zinc-500" />
+                    <span>登出系統</span>
                   </button>
 
                   <button
@@ -2124,8 +2220,8 @@
                   onUpdateAvatar={handleUpdateMemberAvatar}
                   onRemoveAvatar={handleRemoveMemberAvatar}
                   onUpdatePassword={handleUpdatePassword}
-                  onOpenAddAdmin={() => setIsAddAdminModalOpen(true)}
-                  onOpenFirebaseConfig={() => setIsFirebaseModalOpen(true)}
+                  onOpenAddAdmin={null}
+                  onOpenFirebaseConfig={null}
                 />
               )}
 
@@ -2358,25 +2454,27 @@
               members={members}
             />
 
-            {/* --- FIREBASE CLOUD CONFIG MODAL --- */}
-            <FirebaseConfigModal
-              isOpen={isFirebaseModalOpen}
-              onClose={() => setIsFirebaseModalOpen(false)}
-              config={firebaseConfig}
-              onSaveConfig={(cfg) => {
-                setFirebaseConfig(cfg);
-                if (cfg) {
-                  localStorage.setItem('frc10114_firebase_config', JSON.stringify(cfg));
-                } else {
-                  localStorage.removeItem('frc10114_firebase_config');
-                  setIsFirebaseConnected(false);
-                }
-              }}
-              isConnected={isFirebaseConnected}
-              onSeedToCloud={syncToCloud}
-              isSyncing={isSyncingCloud}
-              showToast={showToast}
-            />
+            {/* --- FIREBASE CLOUD CONFIG MODAL (ADMIN ONLY) --- */}
+            {currentRole === 'admin' && (
+              <FirebaseConfigModal
+                isOpen={isFirebaseModalOpen}
+                onClose={() => setIsFirebaseModalOpen(false)}
+                config={firebaseConfig}
+                onSaveConfig={(cfg) => {
+                  setFirebaseConfig(cfg);
+                  if (cfg) {
+                    localStorage.setItem('frc10114_firebase_config', JSON.stringify(cfg));
+                  } else {
+                    localStorage.removeItem('frc10114_firebase_config');
+                    setIsFirebaseConnected(false);
+                  }
+                }}
+                isConnected={isFirebaseConnected}
+                onSeedToCloud={syncToCloud}
+                isSyncing={isSyncingCloud}
+                showToast={showToast}
+              />
+            )}
 
             {/* --- DATA EXPORT & BACKUP MODAL --- */}
             <DataExportModal
@@ -7236,6 +7334,32 @@
                         </button>
                       </div>
                     </div>
+
+                    {/* Multi-Device Auto-Sync Export */}
+                    <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <div className="font-bold text-zinc-900 text-xs">全隊多裝置免輸入自動連線檔 (firebase-config.json)</div>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">下載此設定檔放入專案 public/ 資料夾並推送到 GitHub，所有隊員手機與電腦開啟網頁均自動雙向連線！</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!apiKey || !projectId) {
+                              alert('請先填寫 API Key 與 Project ID');
+                              return;
+                            }
+                            const cfg = { apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId };
+                            exportToJSON('firebase-config.json', cfg);
+                            setStatusMsg('✅ 已下載 firebase-config.json！將此檔放入專案 public 資料夾並推送到 GitHub，所有隊員免輸入即可自動連線。');
+                          }}
+                          className="px-3.5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold rounded-lg text-xs shadow-xs flex items-center justify-center gap-1.5 flex-shrink-0"
+                        >
+                          <Icon name="download" className="w-4 h-4 text-orange-400" />
+                          <span>下載共用設定檔</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -7277,7 +7401,7 @@
       }
 
       // --- 5. SECURE ROLE LOGIN MODAL (REQUIRES PASSWORD FOR ALL ROLES) ---
-      function RoleLoginModal({ members, onClose, onSelectRole }) {
+      function RoleLoginModal({ members, onClose, onSelectRole, isPageMode = false }) {
         const [tab, setTab] = useState('admin');
 
         // Admin Auth State
@@ -7346,9 +7470,16 @@
         const currentSelMember = members.find(m => m.id === memberId) || members[0];
         const currentSelAdmin = members.find(m => m.id === selectedAdminId) || adminMembers[0] || members[0];
 
+        const outerClass = isPageMode
+          ? "min-h-screen bg-[#fafafa] flex flex-col items-center justify-center p-4 sm:p-6"
+          : "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs";
+        const cardClass = isPageMode
+          ? "bg-white border border-zinc-200 w-full max-w-lg rounded-2xl shadow-xl overflow-hidden"
+          : "bg-white border border-zinc-200 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200";
+
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs">
-            <div className="bg-white border border-zinc-200 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className={outerClass}>
+            <div className={cardClass}>
               {/* Header */}
               <div className="bg-zinc-950 p-6 text-white text-center relative">
                 {onClose && (
@@ -7642,6 +7773,12 @@
                 )}
               </div>
             </div>
+            {isPageMode && (
+              <div className="text-center mt-6 text-xs text-zinc-400 space-y-1">
+                <div className="font-semibold text-zinc-600">新北市立錦和高級中學機器人校隊 • FRC Team 10114</div>
+                <div className="text-[11px] text-zinc-400">登入後將依照您的身分自動跳轉至個人專屬頁面</div>
+              </div>
+            )}
           </div>
         );
       }
