@@ -851,13 +851,24 @@
       }
 
       // --- FIREBASE CLOUD DATABASE ENGINE (Dual Mode with LocalStorage Fallback) ---
+      const DEFAULT_FIREBASE_CONFIG = {
+        apiKey: "AIzaSyC0EWuQAyT_tMGleHe8UjdLmgiBC1D5Vdw",
+        authDomain: "frc10114-team-manage.firebaseapp.com",
+        projectId: "frc10114-team-manage",
+        storageBucket: "frc10114-team-manage.firebasestorage.app",
+        messagingSenderId: "204976301369",
+        appId: "1:204976301369:web:86d7cdd1d7d273647974e8"
+      };
+
       function getSavedFirebaseConfig() {
         try {
           const s = localStorage.getItem('frc10114_firebase_config');
-          return s ? JSON.parse(s) : null;
-        } catch (e) {
-          return null;
-        }
+          if (s) {
+            const parsed = JSON.parse(s);
+            if (parsed && parsed.apiKey) return parsed;
+          }
+        } catch (e) {}
+        return DEFAULT_FIREBASE_CONFIG;
       }
 
       function initFirestore(config) {
