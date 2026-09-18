@@ -2006,50 +2006,58 @@
           <div className="min-h-screen flex flex-col bg-[#fafafa]">
             {/* --- TOP NAVBAR --- */}
             <header className="sticky top-0 z-40 bg-white border-b border-zinc-200 shadow-xs">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+              <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2">
                 {/* Brand */}
-                <div className="flex items-center gap-3">
-                  <div className="h-10 px-3.5 rounded-xl bg-zinc-950 text-white flex items-center justify-center font-black tracking-tight border border-zinc-800 shadow-sm select-none gap-0.5">
-                    <span className="text-orange-500 font-black text-lg">10</span>
-                    <span className="text-white font-black text-lg">114</span>
+                <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0 min-w-0">
+                  <div className="h-8 sm:h-10 px-2 sm:px-3 rounded-lg sm:rounded-xl bg-zinc-950 text-white flex items-center justify-center font-black tracking-tight border border-zinc-800 shadow-sm select-none gap-0.5 flex-shrink-0">
+                    <span className="text-orange-500 font-black text-sm sm:text-lg">10</span>
+                    <span className="text-white font-black text-sm sm:text-lg">114</span>
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-extrabold text-base tracking-tight text-zinc-900">FRC 10114 隊務系統</span>
-                      <span className="hidden sm:inline-block px-2 py-0.5 text-[11px] font-bold bg-orange-50 text-orange-600 rounded-md border border-orange-200">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <span className="font-extrabold text-xs sm:text-base tracking-tight text-zinc-900 whitespace-nowrap">
+                        FRC 10114 隊務系統
+                      </span>
+                      <span className="hidden md:inline-block px-2 py-0.5 text-[11px] font-bold bg-orange-50 text-orange-600 rounded-md border border-orange-200 whitespace-nowrap">
                         新北錦和高中
                       </span>
                     </div>
-                    <p className="text-[11px] text-zinc-400 hidden sm:block">Jinhe High School Robotics Team</p>
+                    <p className="text-[11px] text-zinc-400 hidden lg:block whitespace-nowrap">Jinhe High School Robotics Team</p>
                   </div>
                 </div>
 
                 {/* Role Switcher & Profile Badge */}
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <div className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 py-1.5 px-3 rounded-lg text-xs">
+                <div className="flex items-center gap-1.5 sm:gap-2.5 flex-shrink-0">
+                  <div className="flex items-center gap-1.5 sm:gap-2 bg-zinc-50 border border-zinc-200 py-1 px-2 sm:py-1.5 sm:px-3 rounded-lg text-xs whitespace-nowrap flex-shrink-0">
                     {currentRole === 'admin' && (
                       <>
-                        <Icon name="shield" className="w-4 h-4 text-orange-600" />
-                        <span className="font-bold text-zinc-900">管理員教練</span>
+                        <Icon name="shield" className="w-3.5 h-3.5 text-orange-600 flex-shrink-0" />
+                        <span className="font-bold text-zinc-900 whitespace-nowrap">
+                          <span className="hidden sm:inline">管理員教練</span>
+                          <span className="sm:hidden">管理員</span>
+                        </span>
                       </>
                     )}
                     {currentRole === 'member' && (
                       <>
                         {currentMember.avatar ? (
-                          <img src={currentMember.avatar} alt={currentMember.name} className="w-5 h-5 rounded-full object-cover border border-orange-400" />
+                          <img src={currentMember.avatar} alt={currentMember.name} className="w-4 h-4 sm:w-5 sm:h-5 rounded-full object-cover border border-orange-400 flex-shrink-0" />
                         ) : (
-                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
                         )}
-                        <span className="text-zinc-500">隊員:</span>
-                        <span className="font-bold text-zinc-900">{currentMember.name}</span>
+                        <span className="text-zinc-500 hidden sm:inline">隊員:</span>
+                        <span className="font-bold text-zinc-900 whitespace-nowrap">{currentMember.name}</span>
                         <span className="font-mono text-zinc-400 hidden md:inline">({currentMember.id})</span>
                       </>
                     )}
                     {currentRole === 'parent' && (
                       <>
-                        <Icon name="heart" className="w-4 h-4 text-orange-500" />
-                        <span className="text-zinc-500">家長通道:</span>
-                        <span className="font-bold text-zinc-900">{parentStudentName} 家長</span>
+                        <Icon name="heart" className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
+                        <span className="text-zinc-500 hidden sm:inline">家長通道:</span>
+                        <span className="font-bold text-zinc-900 whitespace-nowrap">
+                          <span className="hidden sm:inline">{parentStudentName} 家長</span>
+                          <span className="sm:hidden">{parentStudentName}家長</span>
+                        </span>
                       </>
                     )}
                   </div>
@@ -2058,7 +2066,7 @@
                   {currentRole === 'admin' && (
                     <button
                       onClick={() => setIsFirebaseModalOpen(true)}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg border shadow-2xs transition-all ${
+                      className={`flex items-center gap-1 sm:gap-1.5 px-2 py-1 sm:px-2.5 sm:py-1.5 text-xs font-bold rounded-lg border shadow-2xs transition-all whitespace-nowrap flex-shrink-0 ${
                         isFirebaseConnected
                           ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
                           : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
@@ -2081,19 +2089,19 @@
                     </button>
                   )}
 
-
                   <button
                     onClick={handleLogout}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-lg shadow-2xs transition-colors"
+                    className="flex items-center gap-1 sm:gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 text-xs font-semibold text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-lg shadow-2xs transition-colors whitespace-nowrap flex-shrink-0"
                     title="登出目前身分並返回登入入口"
                   >
-                    <Icon name="logout" className="w-3.5 h-3.5 text-zinc-500" />
-                    <span>登出系統</span>
+                    <Icon name="logout" className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
+                    <span className="hidden sm:inline">登出系統</span>
+                    <span className="sm:hidden">登出</span>
                   </button>
 
                   <button
                     onClick={handleResetFactory}
-                    className="hidden lg:flex items-center gap-1 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-lg transition-colors"
+                    className="hidden lg:flex items-center gap-1 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-lg transition-colors whitespace-nowrap flex-shrink-0"
                     title="恢復原廠示範資料"
                   >
                     <Icon name="revert" className="w-3.5 h-3.5" />
@@ -2104,7 +2112,7 @@
 
               {/* Navigation Tabs Bar */}
               <div className="border-t border-zinc-100 bg-zinc-50/70 overflow-x-auto scrollbar-none">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-1 py-1.5">
+                <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex space-x-1 py-1.5">
                   {currentRole === 'admin' && [
                     { id: 'profile', label: '管理員設定', icon: 'shieldCheck' },
                     { id: 'members', label: '隊員管理', icon: 'user' },
