@@ -1412,6 +1412,30 @@
           }
         };
 
+        const handleBatchVerifyTask = (taskIds, taskName) => {
+          const now = new Date();
+          const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          const nextTasks = tasks.map(t =>
+            taskIds.includes(t.id)
+              ? { ...t, status: 'completed', verifiedAt: dateStr, verifiedBy: currentMember.name || '教練' }
+              : t
+          );
+          setTasks(nextTasks);
+          try { localStorage.setItem('frc10114_tasks', JSON.stringify(nextTasks)); } catch (e) {}
+          syncToCloud({ tasks: nextTasks });
+          showToast('批次審核通過！', `「${taskName}」共 ${taskIds.length} 位隊員已全數蓋章通過！`, 'success');
+        };
+
+        const handleDeleteTaskGroup = (taskName, department) => {
+          if (window.confirm(`確定要刪除「${taskName}」(${department}) 整項考核任務與所屬所有隊員紀錄嗎？`)) {
+            const nextTasks = tasks.filter(t => !(t.taskName === taskName && t.department === department));
+            setTasks(nextTasks);
+            try { localStorage.setItem('frc10114_tasks', JSON.stringify(nextTasks)); } catch (e) {}
+            syncToCloud({ tasks: nextTasks });
+            showToast('考核任務已刪除', `已移除「${taskName}」`, 'info');
+          }
+        };
+
         // 工作任務清單 (pendingTasks) - Add, Delete, Toggle
         const handleAddPendingTask = (newTask) => {
           const now = new Date();
@@ -2312,8 +2336,10 @@
                   pendingTasks={pendingTasks}
                   members={sortedMembers}
                   onVerify={handleVerifyTask}
+                  onBatchVerify={handleBatchVerifyTask}
                   onAddTask={handleAddTask}
                   onDeleteTask={handleDeleteTask}
+                  onDeleteTaskGroup={handleDeleteTaskGroup}
                   onAddPendingTask={handleAddPendingTask}
                   onDeletePendingTask={handleDeletePendingTask}
                   onTogglePendingTask={handleTogglePendingTask}
@@ -5160,8 +5186,10 @@
         pendingTasks = [],
         members = [],
         onVerify,
+        onBatchVerify,
         onAddTask,
         onDeleteTask,
+        onDeleteTaskGroup,
         onAddPendingTask,
         onDeletePendingTask,
         onTogglePendingTask
@@ -5175,7 +5203,10 @@
         const [studentId, setStudentId] = useState('');
         const [taskName, setTaskName] = useState('');
         const [dept, setDept] = useState('機電整合組');
-        const [stampFilter, setStampFilter] = useState('all');
+        const [stampFilter, setStampFilter] = useState('all'); // 'all' | 'pending' | 'completed'
+        const [deptFilter, setDeptFilter] = useState('all');
+        const [selectedTaskKey, setSelectedTaskKey] = useState(null);
+        const [studentStatusFilter, setStudentStatusFilter] = useState('all'); // 'all' | 'pending' | 'completed'
 
         const studentMembers = useMemo(() => {
           return members
@@ -5189,11 +5220,52 @@
           }
         }, [studentMembers, studentId]);
 
-        const filteredStamps = tasks.filter(t => {
-          if (stampFilter === 'pending') return t.status === 'pending';
-          if (stampFilter === 'completed') return t.status === 'completed';
-          return true;
-        });
+        // Group tasks into distinct categories (by department & taskName)
+        const taskGroups = useMemo(() => {
+          const map = new Map();
+          tasks.forEach(t => {
+            const tDept = t.department || '未分類';
+            const tName = t.taskName || '未命名考核';
+            const key = `${tDept}___${tName}`;
+            if (!map.has(key)) {
+              map.set(key, {
+                key,
+                taskName: tName,
+                department: tDept,
+                records: [],
+              });
+            }
+            map.get(key).records.push(t);
+          });
+
+          return Array.from(map.values()).map(g => {
+            const total = g.records.length;
+            const completed = g.records.filter(r => r.status === 'completed').length;
+            const pending = g.records.filter(r => r.status === 'pending').length;
+            const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+            return {
+              ...g,
+              total,
+              completed,
+              pending,
+              progress,
+            };
+          });
+        }, [tasks]);
+
+        const filteredGroups = useMemo(() => {
+          return taskGroups.filter(g => {
+            if (deptFilter !== 'all' && g.department !== deptFilter) return false;
+            if (stampFilter === 'pending' && g.pending === 0) return false;
+            if (stampFilter === 'completed' && g.pending > 0) return false;
+            return true;
+          });
+        }, [taskGroups, deptFilter, stampFilter]);
+
+        const currentTaskGroup = useMemo(() => {
+          if (!selectedTaskKey) return null;
+          return taskGroups.find(g => g.key === selectedTaskKey) || null;
+        }, [taskGroups, selectedTaskKey]);
 
         const handleAddStamp = (e) => {
           e.preventDefault();
@@ -5329,129 +5401,339 @@
             {/* ======================================================== */}
             {activeModule === 'stamps' && (
               <div className="space-y-4">
-                {/* Actions & Filters Bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 border border-zinc-200 rounded-xl">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setStampFilter('all')}
-                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                        stampFilter === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
-                      }`}
-                    >
-                      全部任務 ({tasks.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStampFilter('pending')}
-                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                        stampFilter === 'pending' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
-                      }`}
-                    >
-                      待審核 ({pendingStampCount})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStampFilter('completed')}
-                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                        stampFilter === 'completed' ? 'bg-emerald-700 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
-                      }`}
-                    >
-                      已蓋章通過 ({tasks.filter(t => t.status === 'completed').length})
-                    </button>
-                  </div>
+                {/* VIEW 1: 當未選擇特定任務時，顯示「考核任務子分類目錄」 */}
+                {!currentTaskGroup ? (
+                  <div className="space-y-4 animate-in fade-in duration-150">
+                    {/* Actions & Filters Bar */}
+                    <div className="bg-white p-4 border border-zinc-200 rounded-xl space-y-3 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        {/* Status Filter */}
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                          <span className="font-bold text-zinc-700 mr-1">狀態：</span>
+                          <button
+                            type="button"
+                            onClick={() => setStampFilter('all')}
+                            className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                              stampFilter === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+                            }`}
+                          >
+                            全部項目 ({taskGroups.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStampFilter('pending')}
+                            className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                              stampFilter === 'pending' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                            }`}
+                          >
+                            待審核 ({taskGroups.filter(g => g.pending > 0).length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStampFilter('completed')}
+                            className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                              stampFilter === 'completed' ? 'bg-emerald-700 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                            }`}
+                          >
+                            已全員通過 ({taskGroups.filter(g => g.pending === 0).length})
+                          </button>
+                        </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setIsAddStampOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors self-start sm:self-auto"
-                  >
-                    <Icon name="plus" className="w-4 h-4" />
-                    <span>指派新學習集章任務</span>
-                  </button>
-                </div>
-
-                {/* Stamps Grid */}
-                {filteredStamps.length === 0 ? (
-                  <div className="bg-white border border-dashed border-zinc-300 rounded-xl p-8 text-center text-zinc-400 text-xs">
-                    目前此分類下暫無任何學習集章任務項目
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredStamps.map(task => {
-                      const isDone = task.status === 'completed';
-                      return (
-                        <div
-                          key={task.id}
-                          className={`bg-white border rounded-xl p-5 shadow-xs transition-all relative overflow-hidden flex flex-col justify-between ${
-                            isDone ? 'border-zinc-200' : 'border-orange-300 bg-orange-50/15'
-                          }`}
+                        <button
+                          type="button"
+                          onClick={() => setIsAddStampOpen(true)}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors self-start sm:self-auto"
                         >
-                          {isDone && (
-                            <div className="absolute -right-2 -bottom-2 pointer-events-none rotate-[-12deg] select-none z-10">
-                              <div className="border-2 border-dashed border-emerald-600 text-emerald-700 rounded-lg px-3 py-1 text-center font-mono font-black text-xs uppercase bg-emerald-50/95 shadow-xs">
-                                <div>★ FRC 10114 ★</div>
-                                <div className="text-sm font-black">PASSED 核可</div>
+                          <Icon name="plus" className="w-4 h-4" />
+                          <span>指派新學習集章任務</span>
+                        </button>
+                      </div>
+
+                      {/* Department Filter Bar */}
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs pt-2 border-t border-zinc-100">
+                        <span className="font-bold text-zinc-700 mr-1">組別篩選：</span>
+                        {['all', '機電整合組', '程式控制組', '行銷管理組'].map(d => (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => setDeptFilter(d)}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                              deptFilter === d ? 'bg-orange-600 text-white shadow-2xs' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                            }`}
+                          >
+                            {d === 'all' ? '全部組別' : d}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Task Categories Grid */}
+                    {filteredGroups.length === 0 ? (
+                      <div className="bg-white border border-dashed border-zinc-300 rounded-xl p-10 text-center text-zinc-400 text-xs">
+                        <Icon name="award" className="w-8 h-8 mx-auto mb-2 text-zinc-300" />
+                        <p className="font-bold text-zinc-600 text-sm">目前無符合條件的技能考核項目</p>
+                        <p className="mt-1">點擊上方「指派新學習集章任務」即可建立組別考核項目。</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredGroups.map(g => (
+                          <div
+                            key={g.key}
+                            onClick={() => setSelectedTaskKey(g.key)}
+                            className="bg-white border border-zinc-200 hover:border-orange-400 hover:shadow-md rounded-xl p-5 shadow-xs transition-all flex flex-col justify-between cursor-pointer group"
+                          >
+                            <div className="space-y-3">
+                              {/* Top badges */}
+                              <div className="flex items-center justify-between">
+                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                  {g.department}
+                                </span>
+                                {g.pending > 0 ? (
+                                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-orange-100 text-orange-800 border border-orange-200 animate-pulse">
+                                    {g.pending} 位待審核
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    全員已通過 ✓
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Task Title */}
+                              <h3 className="text-base font-black text-zinc-900 tracking-tight group-hover:text-orange-600 transition-colors">
+                                {g.taskName}
+                              </h3>
+
+                              {/* Progress bar */}
+                              <div>
+                                <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-300 ${
+                                      g.pending === 0 ? 'bg-emerald-500' : 'bg-orange-500'
+                                    }`}
+                                    style={{ width: `${g.progress}%` }}
+                                  />
+                                </div>
+                                <div className="text-[11px] text-zinc-500 mt-1.5 flex items-center justify-between">
+                                  <span>通過率：<strong className="text-zinc-900">{g.progress}%</strong></span>
+                                  <span>{g.completed}/{g.total} 人通過</span>
+                                </div>
                               </div>
                             </div>
-                          )}
 
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-zinc-100 text-zinc-700 border border-zinc-200">
-                                {task.department}
-                              </span>
-                              {isDone ? (
-                                <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                                  ✓ 已完成驗收蓋章
-                                </span>
-                              ) : (
-                                <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 animate-pulse">
-                                  待教練審核
-                                </span>
-                              )}
-                            </div>
+                            {/* Card Footer Actions */}
+                            <div className="mt-5 pt-3 border-t border-zinc-100 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedTaskKey(g.key)}
+                                className="flex-1 py-2 px-3 bg-zinc-900 group-hover:bg-orange-600 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-2xs"
+                              >
+                                <span>點擊進入審核名單 ({g.pending > 0 ? `${g.pending} 人待審` : `${g.total} 人`})</span>
+                                <Icon name="arrowRight" className="w-3.5 h-3.5" />
+                              </button>
 
-                            <div>
-                              <h4 className="text-base font-extrabold text-zinc-900 tracking-tight">{task.taskName}</h4>
-                              <p className="text-xs text-zinc-500 mt-1">
-                                指定隊員：<span className="font-bold text-zinc-800">{task.studentName}</span> ({task.studentId})
-                              </p>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onDeleteTaskGroup) {
+                                    onDeleteTaskGroup(g.taskName, g.department);
+                                  }
+                                }}
+                                className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                title="刪除此整項考核與隊員紀錄"
+                              >
+                                <Icon name="trash" className="w-4 h-4" />
+                              </button>
                             </div>
                           </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* VIEW 2: 點進去後，顯示「該考核任務的隊員待審核名單」 */
+                  <div className="space-y-4 animate-in fade-in duration-150">
+                    {/* Back Banner & Task Header */}
+                    <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTaskKey(null)}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 hover:text-orange-700 hover:underline mb-3 cursor-pointer"
+                      >
+                        <Icon name="chevronLeft" className="w-4 h-4" />
+                        <span>返回所有考核任務子分類清單</span>
+                      </button>
 
-                          <div className="mt-5 pt-3 border-t border-zinc-100 flex items-center justify-between text-xs gap-2">
-                            <div>
-                              {isDone ? (
-                                <span className="text-[11px] text-zinc-400 font-mono">
-                                  核章：{task.verifiedAt} ({task.verifiedBy || '教練'})
-                                </span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => onVerify && onVerify(task.id, task.studentName, task.taskName)}
-                                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-all active:scale-95"
-                                >
-                                  <Icon name="award" className="w-3.5 h-3.5" />
-                                  <span>審核通過 (蓋章)</span>
-                                </button>
-                              )}
-                            </div>
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 rounded text-[11px] font-bold bg-orange-50 text-orange-700 border border-orange-200">
+                              {currentTaskGroup.department}
+                            </span>
+                            <h2 className="text-xl font-black text-zinc-900 tracking-tight">
+                              {currentTaskGroup.taskName}
+                            </h2>
+                          </div>
+                          <p className="text-xs text-zinc-500 mt-1">
+                            共 <strong>{currentTaskGroup.total}</strong> 位受測隊員 •
+                            <span className="text-emerald-700 font-bold ml-1">{currentTaskGroup.completed} 人已蓋章通過</span> •
+                            <span className="text-orange-600 font-bold ml-1">{currentTaskGroup.pending} 人待審核</span>
+                          </p>
+                        </div>
 
-                            {/* Delete Learning Stamp Button (Admin Capability) */}
+                        {/* Actions: 一鍵全部審核通過 / 刪除整項考核 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {currentTaskGroup.pending > 0 && (
                             <button
                               type="button"
-                              onClick={() => onDeleteTask && onDeleteTask(task.id, task.studentName, task.taskName)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg font-semibold border border-red-200 transition-colors"
-                              title="刪除此集章任務"
+                              onClick={() => {
+                                const pendingIds = currentTaskGroup.records.filter(r => r.status === 'pending').map(r => r.id);
+                                if (window.confirm(`確定要將「${currentTaskGroup.taskName}」的 ${pendingIds.length} 位待審隊員一鍵全數審核通過嗎？`)) {
+                                  if (onBatchVerify) {
+                                    onBatchVerify(pendingIds, currentTaskGroup.taskName);
+                                  }
+                                }
+                              }}
+                              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors"
                             >
-                              <Icon name="trash" className="w-3.5 h-3.5" />
-                              <span>刪除集章</span>
+                              <Icon name="check" className="w-3.5 h-3.5" />
+                              <span>一鍵全部審核通過 ({currentTaskGroup.pending} 人)</span>
                             </button>
-                          </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (onDeleteTaskGroup) {
+                                onDeleteTaskGroup(currentTaskGroup.taskName, currentTaskGroup.department);
+                                setSelectedTaskKey(null);
+                              }
+                            }}
+                            className="px-3 py-2 border border-zinc-200 hover:border-rose-300 text-zinc-500 hover:text-rose-600 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors flex items-center gap-1"
+                            title="刪除此整項考核"
+                          >
+                            <Icon name="trash" className="w-3.5 h-3.5" />
+                            <span>刪除整項考核</span>
+                          </button>
                         </div>
-                      );
-                    })}
+                      </div>
+
+                      {/* Detail Filter Tabs within this task */}
+                      <div className="flex items-center gap-2 text-xs pt-3 mt-4 border-t border-zinc-100">
+                        <span className="font-bold text-zinc-700 mr-1">篩選隊員：</span>
+                        <button
+                          type="button"
+                          onClick={() => setStudentStatusFilter('all')}
+                          className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                            studentStatusFilter === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          全部名單 ({currentTaskGroup.records.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStudentStatusFilter('pending')}
+                          className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                            studentStatusFilter === 'pending' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          待審核 ({currentTaskGroup.pending})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStudentStatusFilter('completed')}
+                          className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                            studentStatusFilter === 'completed' ? 'bg-emerald-700 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          已蓋章通過 ({currentTaskGroup.completed})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Student Review Cards for this task */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {currentTaskGroup.records
+                        .filter(r => studentStatusFilter === 'all' ? true : r.status === studentStatusFilter)
+                        .map(task => {
+                          const isDone = task.status === 'completed';
+                          return (
+                            <div
+                              key={task.id}
+                              className={`bg-white border rounded-xl p-5 shadow-xs transition-all relative overflow-hidden flex flex-col justify-between ${
+                                isDone ? 'border-zinc-200' : 'border-orange-300 bg-orange-50/15'
+                              }`}
+                            >
+                              {isDone && (
+                                <div className="absolute -right-2 -bottom-2 pointer-events-none rotate-[-12deg] select-none z-10">
+                                  <div className="border-2 border-dashed border-emerald-600 text-emerald-700 rounded-lg px-3 py-1 text-center font-mono font-black text-xs uppercase bg-emerald-50/95 shadow-xs">
+                                    <div>★ FRC 10114 ★</div>
+                                    <div className="text-sm font-black">PASSED 核可</div>
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="w-8 h-8 rounded-lg bg-zinc-900 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                                      {task.studentName ? task.studentName.slice(0, 1) : '隊'}
+                                    </div>
+                                    <div>
+                                      <div className="font-extrabold text-sm text-zinc-900">{task.studentName}</div>
+                                      <div className="text-[11px] text-zinc-400 font-mono">{task.studentId}</div>
+                                    </div>
+                                  </div>
+
+                                  {isDone ? (
+                                    <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                                      ✓ 已完成驗收蓋章
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 animate-pulse">
+                                      待教練審核
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="p-2.5 bg-zinc-50 rounded-lg border border-zinc-100 text-xs text-zinc-600">
+                                  考核任務：<strong className="text-zinc-900">{task.taskName}</strong>
+                                </div>
+                              </div>
+
+                              <div className="mt-5 pt-3 border-t border-zinc-100 flex items-center justify-between text-xs gap-2">
+                                <div>
+                                  {isDone ? (
+                                    <span className="text-[11px] text-zinc-400 font-mono">
+                                      核章：{task.verifiedAt} ({task.verifiedBy || '教練'})
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => onVerify && onVerify(task.id, task.studentName, task.taskName)}
+                                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-all active:scale-95"
+                                    >
+                                      <Icon name="award" className="w-3.5 h-3.5" />
+                                      <span>審核通過 (蓋章)</span>
+                                    </button>
+                                  )}
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteTask && onDeleteTask(task.id, task.studentName, task.taskName)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="刪除此隊員集章紀錄"
+                                >
+                                  <Icon name="trash" className="w-3.5 h-3.5" />
+                                  <span>刪除</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
                   </div>
                 )}
               </div>
