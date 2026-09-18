@@ -1100,15 +1100,42 @@
                 const data = doc.data();
                 if (data && data.updatedBy !== clientIdRef.current) {
                   isRemoteUpdateRef.current = true;
-                  if (data.members && Array.isArray(data.members)) setMembers(data.members);
-                  if (data.events && Array.isArray(data.events)) setEvents(data.events);
-                  if (data.tasks && Array.isArray(data.tasks)) setTasks(data.tasks);
-                  if (data.pendingTasks && Array.isArray(data.pendingTasks)) setPendingTasks(data.pendingTasks);
-                  if (data.materials && Array.isArray(data.materials)) setMaterials(data.materials);
-                  if (data.attendance && Array.isArray(data.attendance)) setAttendance(data.attendance);
-                  if (data.reservations && Array.isArray(data.reservations)) setMachineReservations(data.reservations);
-                  if (data.eduCategories && Array.isArray(data.eduCategories)) setEduCategories(data.eduCategories);
-                  if (data.eduEquipment && Array.isArray(data.eduEquipment)) setEduEquipment(data.eduEquipment);
+                  if (data.members && Array.isArray(data.members)) {
+                    setMembers(data.members);
+                    try { localStorage.setItem('frc10114_members', JSON.stringify(data.members)); } catch (e) {}
+                  }
+                  if (data.events && Array.isArray(data.events)) {
+                    setEvents(data.events);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(data.events)); } catch (e) {}
+                  }
+                  if (data.tasks && Array.isArray(data.tasks)) {
+                    setTasks(data.tasks);
+                    try { localStorage.setItem('frc10114_tasks', JSON.stringify(data.tasks)); } catch (e) {}
+                  }
+                  if (data.pendingTasks && Array.isArray(data.pendingTasks)) {
+                    setPendingTasks(data.pendingTasks);
+                    try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(data.pendingTasks)); } catch (e) {}
+                  }
+                  if (data.materials && Array.isArray(data.materials)) {
+                    setMaterials(data.materials);
+                    try { localStorage.setItem('frc10114_materials', JSON.stringify(data.materials)); } catch (e) {}
+                  }
+                  if (data.attendance && Array.isArray(data.attendance)) {
+                    setAttendance(data.attendance);
+                    try { localStorage.setItem('frc10114_attendance', JSON.stringify(data.attendance)); } catch (e) {}
+                  }
+                  if (data.reservations && Array.isArray(data.reservations)) {
+                    setMachineReservations(data.reservations);
+                    try { localStorage.setItem('frc10114_reservations', JSON.stringify(data.reservations)); } catch (e) {}
+                  }
+                  if (data.eduCategories && Array.isArray(data.eduCategories)) {
+                    setEduCategories(data.eduCategories);
+                    try { localStorage.setItem('frc10114_edu_categories', JSON.stringify(data.eduCategories)); } catch (e) {}
+                  }
+                  if (data.eduEquipment && Array.isArray(data.eduEquipment)) {
+                    setEduEquipment(data.eduEquipment);
+                    try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(data.eduEquipment)); } catch (e) {}
+                  }
                 }
               }
             }, (err) => {
@@ -1129,7 +1156,7 @@
             const db = initFirestore(firebaseConfig);
             if (!db) return false;
             setIsSyncingCloud(true);
-            const payload = overrideData || {
+            const payload = {
               members,
               events,
               tasks,
@@ -1141,6 +1168,7 @@
               eduEquipment,
               updatedAt: Date.now(),
               updatedBy: clientIdRef.current,
+              ...(overrideData || {}),
             };
             await db.collection('frc10114_teams').doc('team_state').set(payload, { merge: true });
             setIsFirebaseConnected(true);
@@ -1588,12 +1616,18 @@
             createdAt: timeStr,
           }));
 
-          setMachineReservations(prev => [...prev, ...newItems]);
+          const next = [...machineReservations, ...newItems];
+          setMachineReservations(next);
+          try { localStorage.setItem('frc10114_reservations', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ reservations: next });
           showToast('機具預約成功！', `已預約 ${machine}（${date} 共 ${slots.length} 小時時段）`, 'success');
         };
 
         const handleCancelMachineReservation = (resId, machine, slot) => {
-          setMachineReservations(prev => prev.filter(r => r.id !== resId));
+          const next = machineReservations.filter(r => r.id !== resId);
+          setMachineReservations(next);
+          try { localStorage.setItem('frc10114_reservations', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ reservations: next });
           showToast('預約已取消', `已釋出 ${machine} ${slot} 時段`, 'info');
         };
 
@@ -1602,29 +1636,38 @@
           const now = new Date();
           const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-          setEduEquipment(prev => prev.map(eq =>
+          const next = eduEquipment.map(eq =>
             eq.id === itemId
               ? { ...eq, status: 'borrowed', borrowedBy: borrowerName, borrowedAt: timeStr, notes }
               : eq
-          ));
+          );
+          setEduEquipment(next);
+          try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ eduEquipment: next });
           showToast('設備出借登記成功', `已登記借給 ${borrowerName}`, 'success');
         };
 
         const handleReturnEduEquipment = (itemId, itemName) => {
-          setEduEquipment(prev => prev.map(eq =>
+          const next = eduEquipment.map(eq =>
             eq.id === itemId
               ? { ...eq, status: 'available', borrowedBy: undefined, borrowedAt: undefined, notes: undefined }
               : eq
-          ));
+          );
+          setEduEquipment(next);
+          try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ eduEquipment: next });
           showToast('設備已歸還', `「${itemName}」已歸還，恢復為空著可借用狀態`, 'info');
         };
 
         // Educational Equipment Categories & Quantity Management
         const handleAddEduCategory = (newCat, initialCount = 0, namePattern = '') => {
-          setEduCategories(prev => {
-            if (prev.some(c => c.id === newCat.id)) return prev;
-            return [...prev, newCat];
-          });
+          let nextCats = eduCategories;
+          if (!eduCategories.some(c => c.id === newCat.id)) {
+            nextCats = [...eduCategories, newCat];
+            setEduCategories(nextCats);
+            try { localStorage.setItem('frc10114_edu_categories', JSON.stringify(nextCats)); } catch (e) {}
+          }
+          let nextEq = eduEquipment;
           if (initialCount > 0) {
             const newItems = Array.from({ length: initialCount }, (_, i) => {
               const pad = String(i + 1).padStart(2, '0');
@@ -1638,83 +1681,94 @@
                 notes: '全新建置設備',
               };
             });
-            setEduEquipment(prev => [...prev, ...newItems]);
+            nextEq = [...eduEquipment, ...newItems];
+            setEduEquipment(nextEq);
+            try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(nextEq)); } catch (e) {}
           }
+          syncToCloud({ eduCategories: nextCats, eduEquipment: nextEq });
           showToast('設備種類建立成功', `已新增「${newCat.name}」${initialCount > 0 ? `與 ${initialCount} 台初始設備` : ''}`, 'success');
         };
 
         const handleDeleteEduCategory = (categoryId) => {
-          setEduCategories(prev => prev.filter(c => c.id !== categoryId));
-          setEduEquipment(prev => prev.filter(e => e.category !== categoryId));
+          const nextCats = eduCategories.filter(c => c.id !== categoryId);
+          const nextEq = eduEquipment.filter(e => e.category !== categoryId);
+          setEduCategories(nextCats);
+          setEduEquipment(nextEq);
+          try { localStorage.setItem('frc10114_edu_categories', JSON.stringify(nextCats)); } catch (e) {}
+          try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(nextEq)); } catch (e) {}
+          syncToCloud({ eduCategories: nextCats, eduEquipment: nextEq });
           showToast('設備種類已刪除', `已移除「${categoryId}」及其下所有設備`, 'info');
         };
 
         const handleAdjustEduQuantity = (categoryId, targetCount, catPrefix, catName) => {
-          let outcome = 'same';
-          setEduEquipment(prev => {
-            const currentCatItems = prev.filter(e => e.category === categoryId);
-            const currentCount = currentCatItems.length;
+          const currentCatItems = eduEquipment.filter(e => e.category === categoryId);
+          const currentCount = currentCatItems.length;
 
-            if (targetCount === currentCount) {
-              outcome = 'same';
-              return prev;
+          if (targetCount === currentCount) return;
+
+          if (targetCount > currentCount) {
+            let maxNum = 0;
+            currentCatItems.forEach(it => {
+              const n = parseInt(it.number, 10);
+              if (!isNaN(n) && n > maxNum) maxNum = n;
+            });
+
+            const addCount = targetCount - currentCount;
+            const newItems = Array.from({ length: addCount }, (_, i) => {
+              const numVal = maxNum + i + 1;
+              const pad = String(numVal).padStart(2, '0');
+              const prefix = catPrefix || 'EQ';
+              return {
+                id: `${prefix}-${pad}-${Date.now().toString().slice(-4)}`,
+                number: pad,
+                category: categoryId,
+                name: `${catName || categoryId} ${pad}號`,
+                status: 'available',
+                notes: '批次擴充設備',
+              };
+            });
+            const nextEq = [...eduEquipment, ...newItems];
+            setEduEquipment(nextEq);
+            try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(nextEq)); } catch (e) {}
+            syncToCloud({ eduEquipment: nextEq });
+            showToast('數量調整完成', `「${categoryId}」總數量已調整為 ${targetCount} 台`, 'success');
+          } else {
+            const diff = currentCount - targetCount;
+            const availableItems = currentCatItems.filter(e => e.status !== 'borrowed');
+            if (availableItems.length < diff) {
+              showToast('無法減少至目標數量', '目前有借出中的設備無法直接刪除，請先辦理歸還！', 'warning');
+              return;
             }
-
-            if (targetCount > currentCount) {
-              outcome = 'increased';
-              let maxNum = 0;
-              currentCatItems.forEach(it => {
-                const n = parseInt(it.number, 10);
-                if (!isNaN(n) && n > maxNum) maxNum = n;
-              });
-
-              const addCount = targetCount - currentCount;
-              const newItems = Array.from({ length: addCount }, (_, i) => {
-                const numVal = maxNum + i + 1;
-                const pad = String(numVal).padStart(2, '0');
-                const prefix = catPrefix || 'EQ';
-                return {
-                  id: `${prefix}-${pad}-${Date.now().toString().slice(-4)}`,
-                  number: pad,
-                  category: categoryId,
-                  name: `${catName || categoryId} ${pad}號`,
-                  status: 'available',
-                  notes: '批次擴充設備',
-                };
-              });
-              return [...prev, ...newItems];
-            } else {
-              const diff = currentCount - targetCount;
-              const availableItems = currentCatItems.filter(e => e.status !== 'borrowed');
-              if (availableItems.length < diff) {
-                outcome = 'blocked';
-                return prev;
-              }
-              outcome = 'decreased';
-              const toRemoveIds = new Set(availableItems.slice(-diff).map(e => e.id));
-              return prev.filter(e => !toRemoveIds.has(e.id));
-            }
-          });
-
-          if (outcome === 'blocked') {
-            showToast('無法減少至目標數量', '目前有借出中的設備無法直接刪除，請先辦理歸還！', 'warning');
-          } else if (outcome !== 'same') {
+            const toRemoveIds = new Set(availableItems.slice(-diff).map(e => e.id));
+            const nextEq = eduEquipment.filter(e => !toRemoveIds.has(e.id));
+            setEduEquipment(nextEq);
+            try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(nextEq)); } catch (e) {}
+            syncToCloud({ eduEquipment: nextEq });
             showToast('數量調整完成', `「${categoryId}」總數量已調整為 ${targetCount} 台`, 'success');
           }
         };
 
         const handleAddEduItem = (newItem) => {
-          setEduEquipment(prev => [...prev, newItem]);
+          const next = [...eduEquipment, newItem];
+          setEduEquipment(next);
+          try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ eduEquipment: next });
           showToast('設備新增成功', `已加入「${newItem.name}」(#${newItem.number})`, 'success');
         };
 
         const handleUpdateEduItem = (itemId, updatedFields) => {
-          setEduEquipment(prev => prev.map(e => e.id === itemId ? { ...e, ...updatedFields } : e));
+          const next = eduEquipment.map(e => e.id === itemId ? { ...e, ...updatedFields } : e);
+          setEduEquipment(next);
+          try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ eduEquipment: next });
           showToast('設備內容已更新', '設備資料與備註已儲存', 'success');
         };
 
         const handleDeleteEduItem = (itemId, itemName) => {
-          setEduEquipment(prev => prev.filter(e => e.id !== itemId));
+          const next = eduEquipment.filter(e => e.id !== itemId);
+          setEduEquipment(next);
+          try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ eduEquipment: next });
           showToast('設備已刪除', `已移除「${itemName}」`, 'info');
         };
 
@@ -1949,8 +2003,11 @@
                             role: 'member',
                             password: '10114',
                           };
-                          setMembers(prev => [...prev, newM]);
+                          const next = [...members, newM];
+                          setMembers(next);
                           setSelectedMemberId(newM.id);
+                          try { localStorage.setItem('frc10114_members', JSON.stringify(next)); } catch (e) {}
+                          syncToCloud({ members: next });
                           showToast('已建立新隊員', `隊員 ${newM.id} 已加入名單，請於右方編輯資料`, 'success');
                         }}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors"
@@ -2569,7 +2626,10 @@
                     const now = new Date();
                     const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
                     const newRec = { ...rec, id: `att-${Date.now()}`, submittedAt: timeStr };
-                    setAttendance(prev => [newRec, ...prev]);
+                    const next = [newRec, ...attendance];
+                    setAttendance(next);
+                    try { localStorage.setItem('frc10114_attendance', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ attendance: next });
                     showToast('申請送出成功！', `已登記 ${rec.date} 之時段，即刻同步至管理員與家長週表。`, 'success');
                   }}
                 />
