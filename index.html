@@ -1056,6 +1056,7 @@
         const [selectedMemberId, setSelectedMemberId] = useState(members[0].id);
         const [pendingSwitchMemberId, setPendingSwitchMemberId] = useState(null);
         const [isUnsavedModalOpen, setIsUnsavedModalOpen] = useState(false);
+        const [memberDeptFilter, setMemberDeptFilter] = useState('all');
 
         // Toast Messages
         const [toasts, setToasts] = useState([]);
@@ -1206,6 +1207,12 @@
             (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' })
           );
         }, [members]);
+
+        // Filtered members for Member Management by Department
+        const filteredMembersByDept = useMemo(() => {
+          if (memberDeptFilter === 'all') return sortedMembers;
+          return sortedMembers.filter(m => (m.departments || []).some(d => d.includes(memberDeptFilter)));
+        }, [sortedMembers, memberDeptFilter]);
 
         // Handle Add New Admin Coach
         const handleCreateAdmin = (adminData) => {
@@ -1961,63 +1968,118 @@
                         <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-2">
                           人員即時切換 (包含 ID、姓名、Email)
                         </label>
+
+                        {/* 組別篩選按鈕列：全團隊／機電組／程式組／行銷組 */}
+                        <div className="grid grid-cols-4 gap-1 p-1 bg-zinc-100 rounded-lg mb-2.5 border border-zinc-200">
+                          {[
+                            { key: 'all', label: '全團隊' },
+                            { key: '機電', label: '機電組' },
+                            { key: '程式', label: '程式組' },
+                            { key: '行銷', label: '行銷組' },
+                          ].map(item => {
+                            const isSelected = memberDeptFilter === item.key;
+                            const count = item.key === 'all'
+                              ? sortedMembers.length
+                              : sortedMembers.filter(m => (m.departments || []).some(d => d.includes(item.key))).length;
+                            return (
+                              <button
+                                key={item.key}
+                                type="button"
+                                onClick={() => setMemberDeptFilter(item.key)}
+                                className={`py-1.5 px-1 rounded-md text-xs font-bold transition-all text-center flex flex-col items-center justify-center leading-tight cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-orange-600 text-white shadow-xs'
+                                    : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/60'
+                                }`}
+                              >
+                                <span>{item.label}</span>
+                                <span className={`text-[10px] font-mono mt-0.5 ${isSelected ? 'text-orange-100' : 'text-zinc-400'}`}>
+                                  ({count})
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
                         <select
                           value={selectedMemberId}
                           onChange={(e) => handleSwitchMember(e.target.value)}
                           className="w-full p-2.5 bg-zinc-50 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:bg-white focus:ring-2 focus:ring-orange-500"
                         >
-                          {sortedMembers.map(m => (
+                          {filteredMembersByDept.map(m => (
                             <option key={m.id} value={m.id}>
-                              {m.id} - {m.name} {m.role === 'admin' ? '🛡️ (管理員)' : ''} ({m.email})
+                              {m.id} - {m.name} {m.role === 'admin' ? '🛡️ (管理員)' : ''} ({m.departments.join('、')})
                             </option>
                           ))}
+                          {!filteredMembersByDept.some(m => m.id === selectedMemberId) && originalMember && (
+                            <option key={originalMember.id} value={originalMember.id} disabled>
+                              --- [當前編輯中] {originalMember.id} - {originalMember.name} ---
+                            </option>
+                          )}
                         </select>
                       </div>
 
                       <div>
-                        <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-2">
-                          名冊列表 ({sortedMembers.length} 位隊員，依編號排序)
-                        </span>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">
+                            名冊列表 ({filteredMembersByDept.length} 位隊員{memberDeptFilter !== 'all' ? ` / 全隊 ${sortedMembers.length} 位` : '，依編號排序'})
+                          </span>
+                          {memberDeptFilter !== 'all' && (
+                            <button
+                              type="button"
+                              onClick={() => setMemberDeptFilter('all')}
+                              className="text-[10px] font-bold text-orange-600 hover:underline cursor-pointer"
+                            >
+                              顯示全團隊
+                            </button>
+                          )}
+                        </div>
                         <div className="space-y-1.5 max-h-[380px] overflow-y-auto pr-1">
-                          {sortedMembers.map(m => {
-                            const isCur = m.id === selectedMemberId;
-                            return (
-                              <button
-                                key={m.id}
-                                onClick={() => handleSwitchMember(m.id)}
-                                className={`w-full text-left p-2.5 rounded-lg text-xs font-medium border transition-all flex items-center justify-between gap-2.5 ${
-                                  isCur
-                                    ? 'bg-zinc-900 text-white border-zinc-900 shadow-xs'
-                                    : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 overflow-hidden border ${
-                                    isCur ? 'bg-zinc-800 border-zinc-700 text-orange-400' : 'bg-zinc-900 border-zinc-800 text-orange-500'
-                                  }`}>
-                                    {m.avatar ? (
-                                      <img src={m.avatar} alt={m.name} className="w-full h-full object-cover" />
-                                    ) : (
-                                      <span>{m.name.slice(0, 1)}</span>
-                                    )}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="font-bold flex items-center gap-1.5 truncate">
-                                      <span>{m.name}</span>
-                                      <span className={`font-mono text-[10px] ${isCur ? 'text-orange-400' : 'text-zinc-400'}`}>({m.id})</span>
-                                      {m.role === 'admin' && (
-                                        <span className="px-1.5 py-0.2 text-[9px] font-bold bg-orange-500 text-white rounded">管理員</span>
+                          {filteredMembersByDept.length === 0 ? (
+                            <div className="p-4 text-center text-zinc-400 text-xs bg-zinc-50 rounded-lg border border-dashed border-zinc-200">
+                              此組別目前尚無隊員
+                            </div>
+                          ) : (
+                            filteredMembersByDept.map(m => {
+                              const isCur = m.id === selectedMemberId;
+                              return (
+                                <button
+                                  key={m.id}
+                                  onClick={() => handleSwitchMember(m.id)}
+                                  className={`w-full text-left p-2.5 rounded-lg text-xs font-medium border transition-all flex items-center justify-between gap-2.5 cursor-pointer ${
+                                    isCur
+                                      ? 'bg-zinc-900 text-white border-zinc-900 shadow-xs'
+                                      : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 overflow-hidden border ${
+                                      isCur ? 'bg-zinc-800 border-zinc-700 text-orange-400' : 'bg-zinc-900 border-zinc-800 text-orange-500'
+                                    }`}>
+                                      {m.avatar ? (
+                                        <img src={m.avatar} alt={m.name} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <span>{m.name.slice(0, 1)}</span>
                                       )}
                                     </div>
-                                    <div className={`text-[10px] mt-0.5 truncate ${isCur ? 'text-zinc-300' : 'text-zinc-500'}`}>
-                                      {m.departments.join(' · ')}
+                                    <div className="min-w-0">
+                                      <div className="font-bold flex items-center gap-1.5 truncate">
+                                        <span>{m.name}</span>
+                                        <span className={`font-mono text-[10px] ${isCur ? 'text-orange-400' : 'text-zinc-400'}`}>({m.id})</span>
+                                        {m.role === 'admin' && (
+                                          <span className="px-1.5 py-0.2 text-[9px] font-bold bg-orange-500 text-white rounded">管理員</span>
+                                        )}
+                                      </div>
+                                      <div className={`text-[10px] mt-0.5 truncate ${isCur ? 'text-zinc-300' : 'text-zinc-500'}`}>
+                                        {m.departments.join(' · ')}
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                                {isCur && <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />}
-                              </button>
-                            );
-                          })}
+                                  {isCur && <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />}
+                                </button>
+                              );
+                            })
+                          )}
                         </div>
                       </div>
                     </div>
@@ -5308,6 +5370,74 @@
           setTaskName('');
         };
 
+        // --- 1.3 額外新增隊員至單項考核名冊 State & Handlers ---
+        const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
+        const [selectedEnrollIds, setSelectedEnrollIds] = useState([]);
+        const [enrollDeptFilter, setEnrollDeptFilter] = useState('all');
+        const [enrollSearch, setEnrollSearch] = useState('');
+
+        const currentTaskStudentIds = useMemo(() => {
+          if (!currentTaskGroup) return new Set();
+          return new Set(currentTaskGroup.records.map(r => r.studentId));
+        }, [currentTaskGroup]);
+
+        const candidateEnrollMembers = useMemo(() => {
+          return studentMembers.filter(m => {
+            if (enrollDeptFilter !== 'all' && !(m.departments || []).includes(enrollDeptFilter)) {
+              return false;
+            }
+            if (enrollSearch.trim()) {
+              const q = enrollSearch.trim().toLowerCase();
+              const matchName = (m.name || '').toLowerCase().includes(q);
+              const matchId = (m.id || '').toLowerCase().includes(q);
+              if (!matchName && !matchId) return false;
+            }
+            return true;
+          });
+        }, [studentMembers, enrollDeptFilter, enrollSearch]);
+
+        const unassignedInView = useMemo(() => {
+          return candidateEnrollMembers.filter(m => !currentTaskStudentIds.has(m.id));
+        }, [candidateEnrollMembers, currentTaskStudentIds]);
+
+        const handleToggleEnrollStudent = (sid) => {
+          if (currentTaskStudentIds.has(sid)) return;
+          setSelectedEnrollIds(prev =>
+            prev.includes(sid) ? prev.filter(id => id !== sid) : [...prev, sid]
+          );
+        };
+
+        const handleSelectAllUnassigned = () => {
+          const newIds = new Set(selectedEnrollIds);
+          unassignedInView.forEach(m => newIds.add(m.id));
+          setSelectedEnrollIds(Array.from(newIds));
+        };
+
+        const handleClearEnrollSelection = () => {
+          setSelectedEnrollIds([]);
+        };
+
+        const handleConfirmEnroll = (e) => {
+          if (e) e.preventDefault();
+          if (!currentTaskGroup || selectedEnrollIds.length === 0) return;
+          const newTasks = selectedEnrollIds.map(sid => {
+            const m = members.find(mem => mem.id === sid);
+            return {
+              studentId: sid,
+              studentName: m ? m.name : '新進隊員',
+              taskName: currentTaskGroup.taskName,
+              department: currentTaskGroup.department,
+              description: currentTaskGroup.records[0]?.description || '',
+            };
+          });
+          if (onAddTask) {
+            onAddTask(newTasks);
+          }
+          setIsEnrollModalOpen(false);
+          setSelectedEnrollIds([]);
+          setEnrollSearch('');
+        };
+
         // --- 2. 工作任務清單 State ---
         const [isAddWorkOpen, setIsAddWorkOpen] = useState(false);
         const [workTitle, setWorkTitle] = useState('');
@@ -5582,8 +5712,21 @@
                           </p>
                         </div>
 
-                        {/* Actions: 一鍵全部審核通過 / 刪除整項考核 */}
+                        {/* Actions: 新增隊員名冊 / 一鍵全部審核通過 / 刪除整項考核 */}
                         <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsEnrollModalOpen(true);
+                              setSelectedEnrollIds([]);
+                              setEnrollDeptFilter('all');
+                              setEnrollSearch('');
+                            }}
+                            className="px-3.5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Icon name="plus" className="w-3.5 h-3.5" />
+                            <span>＋ 額外新增隊員名冊</span>
+                          </button>
                           {currentTaskGroup.pending > 0 && (
                             <button
                               type="button"
@@ -6099,6 +6242,233 @@
                       </button>
                     </div>
                   </form>
+                </div>
+              </div>
+            )}
+
+            {/* Modal 3: 額外新增單名或複數隊員至單項考核名冊 */}
+            {isEnrollModalOpen && currentTaskGroup && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+                <div className="bg-white border border-zinc-200 w-full max-w-lg rounded-2xl shadow-2xl p-6 overflow-hidden flex flex-col max-h-[90vh]">
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-3 flex-shrink-0">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-700 border border-orange-200">
+                          {currentTaskGroup.department}
+                        </span>
+                        <h3 className="text-base font-bold text-zinc-900">額外新增隊員至考核名冊</h3>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        目標任務：<strong className="text-zinc-800">{currentTaskGroup.taskName}</strong> •
+                        目前已有 {currentTaskGroup.records.length} 位隊員在冊
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsEnrollModalOpen(false)}
+                      className="p-1 rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer"
+                    >
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Filters: Search & Department Tabs */}
+                  <div className="space-y-2 mb-3 flex-shrink-0">
+                    {/* Search Input */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={enrollSearch}
+                        onChange={(e) => setEnrollSearch(e.target.value)}
+                        placeholder="搜尋隊員姓名或編號 (如 10114-003)..."
+                        className="w-full pl-8 pr-7 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-orange-500"
+                      />
+                      <Icon name="search" className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-2.5" />
+                      {enrollSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setEnrollSearch('')}
+                          className="absolute right-2.5 top-2.5 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                        >
+                          <Icon name="x" className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Department Filter Tabs */}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {[
+                        { key: 'all', label: '全部學生' },
+                        { key: '機電整合組', label: '機電組' },
+                        { key: '程式控制組', label: '程式組' },
+                        { key: '行銷管理組', label: '行銷組' },
+                      ].map(tab => {
+                        const count = tab.key === 'all'
+                          ? studentMembers.length
+                          : studentMembers.filter(m => (m.departments || []).includes(tab.key)).length;
+                        return (
+                          <button
+                            key={tab.key}
+                            type="button"
+                            onClick={() => setEnrollDeptFilter(tab.key)}
+                            className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                              enrollDeptFilter === tab.key
+                                ? 'bg-orange-600 text-white shadow-2xs'
+                                : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                            }`}
+                          >
+                            {tab.label} ({count})
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Quick Selection Toolbar */}
+                    <div className="flex items-center justify-between pt-2 border-t border-zinc-100 text-xs">
+                      <span className="text-zinc-500 font-medium">
+                        未在此考核中：<strong className="text-orange-600 font-bold">{unassignedInView.length}</strong> 人
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {unassignedInView.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleSelectAllUnassigned}
+                            className="text-orange-600 hover:text-orange-700 font-bold hover:underline cursor-pointer"
+                          >
+                            全選未加入隊員 ({unassignedInView.length})
+                          </button>
+                        )}
+                        {selectedEnrollIds.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleClearEnrollSelection}
+                            className="text-zinc-500 hover:text-zinc-700 font-medium hover:underline cursor-pointer"
+                          >
+                            取消選取
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Scrollable Student Checklist */}
+                  <div className="space-y-1.5 overflow-y-auto flex-1 pr-1 border border-zinc-100 rounded-xl p-2 bg-zinc-50/50">
+                    {candidateEnrollMembers.length === 0 ? (
+                      <div className="py-8 text-center text-zinc-400 text-xs">
+                        無符合搜尋或篩選條件的學生隊員
+                      </div>
+                    ) : (
+                      candidateEnrollMembers.map(m => {
+                        const isEnrolled = currentTaskStudentIds.has(m.id);
+                        const isSelected = selectedEnrollIds.includes(m.id);
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => {
+                              if (!isEnrolled) handleToggleEnrollStudent(m.id);
+                            }}
+                            className={`p-2.5 rounded-lg border text-xs transition-all flex items-center justify-between gap-3 select-none ${
+                              isEnrolled
+                                ? 'bg-zinc-100/80 border-zinc-200 opacity-60 cursor-not-allowed'
+                                : isSelected
+                                ? 'bg-orange-50/90 border-orange-500 text-zinc-900 shadow-2xs cursor-pointer'
+                                : 'bg-white hover:bg-zinc-100/60 border-zinc-200 cursor-pointer'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {/* Checkbox */}
+                              <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border transition-colors ${
+                                isEnrolled
+                                  ? 'bg-zinc-300 border-zinc-400 text-white'
+                                  : isSelected
+                                  ? 'bg-orange-600 border-orange-600 text-white'
+                                  : 'border-zinc-300 bg-white'
+                              }`}>
+                                {(isEnrolled || isSelected) && <Icon name="check" className="w-3 h-3" />}
+                              </div>
+
+                              {/* Student Avatar / Initial */}
+                              <div className="w-7 h-7 rounded-lg bg-zinc-900 text-white font-bold text-xs flex items-center justify-center flex-shrink-0 overflow-hidden">
+                                {m.avatar ? (
+                                  <img src={m.avatar} alt={m.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <span>{m.name.slice(0, 1)}</span>
+                                )}
+                              </div>
+
+                              {/* Name & ID */}
+                              <div className="min-w-0">
+                                <div className="font-bold text-zinc-900 flex items-center gap-1.5 truncate">
+                                  <span>{m.name}</span>
+                                  <span className="font-mono text-[10px] text-zinc-400">({m.id})</span>
+                                </div>
+                                <div className="text-[10px] text-zinc-500 truncate">
+                                  {(m.departments || []).join(' · ')}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Status Badge */}
+                            <div>
+                              {isEnrolled ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex-shrink-0">
+                                  <Icon name="check" className="w-3 h-3" />
+                                  <span>已在此考核中</span>
+                                </span>
+                              ) : isSelected ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-orange-600 text-white flex-shrink-0">
+                                  <span>即將新增</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold text-zinc-400 hover:text-zinc-600 flex-shrink-0">
+                                  點擊勾選
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div className="flex items-center justify-between pt-3 mt-3 border-t border-zinc-100 flex-shrink-0">
+                    <div className="text-xs">
+                      {selectedEnrollIds.length > 0 ? (
+                        <span className="font-bold text-orange-600">
+                          已選取 {selectedEnrollIds.length} 位新隊員
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">
+                          請勾選欲加入此考核的隊員
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsEnrollModalOpen(false)}
+                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-semibold hover:bg-zinc-50 cursor-pointer"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        disabled={selectedEnrollIds.length === 0}
+                        onClick={handleConfirmEnroll}
+                        className={`px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 ${
+                          selectedEnrollIds.length > 0
+                            ? 'bg-orange-600 hover:bg-orange-700 text-white cursor-pointer'
+                            : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+                        }`}
+                      >
+                        <Icon name="plus" className="w-3.5 h-3.5" />
+                        <span>確認新增入冊 ({selectedEnrollIds.length} 人)</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
