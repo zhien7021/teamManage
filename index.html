@@ -2268,6 +2268,13 @@
                     syncToCloud({ events: next });
                     showToast('活動發布成功', `「${ev.name}」已排入行事曆並按時序排列`, 'success');
                   }}
+                  onUpdateEvent={(updatedEv) => {
+                    const next = events.map(e => e.id === updatedEv.id ? { ...e, ...updatedEv } : e);
+                    setEvents(next);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ events: next });
+                    showToast('活動已修改', `「${updatedEv.name}」修改已儲存`, 'success');
+                  }}
                   onDeleteEvent={(id, name) => {
                     if (window.confirm(`確定要刪除「${name}」活動嗎？`)) {
                       const next = events.filter(e => e.id !== id);
@@ -2333,7 +2340,32 @@
 
               {/* ADMIN VIEW 5: 到校學習/請假列表 */}
               {currentRole === 'admin' && activeTab === 'attendance' && (
-                <AdminAttendanceTab records={attendance} members={sortedMembers} />
+                <AdminAttendanceTab
+                  records={attendance}
+                  members={sortedMembers}
+                  onAddRecord={(rec) => {
+                    const newRec = {
+                      ...rec,
+                      id: `att-${Date.now()}`,
+                      submittedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
+                    };
+                    const next = [newRec, ...attendance];
+                    setAttendance(next);
+                    try { localStorage.setItem('frc10114_attendance', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ attendance: next });
+                    const typeText = rec.type === 'attendance' ? '留校出席' : rec.type === 'leave' ? '請假' : '未請假';
+                    showToast('考勤登記完成', `已新增「${rec.studentName}」的${typeText}紀錄`, 'success');
+                  }}
+                  onDeleteRecord={(recId, studentName, dateStr, typeText) => {
+                    if (window.confirm(`確定要刪除「${studentName}」於 ${dateStr} 的${typeText}紀錄嗎？`)) {
+                      const next = attendance.filter(r => r.id !== recId);
+                      setAttendance(next);
+                      try { localStorage.setItem('frc10114_attendance', JSON.stringify(next)); } catch (e) {}
+                      syncToCloud({ attendance: next });
+                      showToast('紀錄已刪除', `已自考勤名單移除「${studentName}」(${dateStr})`, 'info');
+                    }
+                  }}
+                />
               )}
 
               {/* ADMIN VIEW 6: 教練個人資料與設定 */}
@@ -4231,6 +4263,7 @@
         isAdmin = false,
         onDeleteEvent,
         onOpenAddEvent,
+        onEditEvent,
         savedIds = [],
         onToggleSave,
         currentMember,
@@ -4594,15 +4627,31 @@
 
                         {/* Actions */}
                         <div className="mt-4 pt-3 border-t border-zinc-200/70 flex items-center justify-between">
-                          {isAdmin && onDeleteEvent && (
-                            <button
-                              type="button"
-                              onClick={() => onDeleteEvent(ev.id, ev.name)}
-                              className="text-xs text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1"
-                            >
-                              <Icon name="trash" className="w-3.5 h-3.5" />
-                              <span>刪除此活動</span>
-                            </button>
+                          {isAdmin && (
+                            <div className="flex items-center gap-2">
+                              {onEditEvent && (
+                                <button
+                                  type="button"
+                                  onClick={() => onEditEvent(ev)}
+                                  className="text-xs text-orange-600 hover:text-orange-700 font-semibold flex items-center gap-1 hover:underline"
+                                  title="編輯此活動內容"
+                                >
+                                  <Icon name="edit" className="w-3.5 h-3.5" />
+                                  <span>編輯此活動</span>
+                                </button>
+                              )}
+                              {onDeleteEvent && (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteEvent(ev.id, ev.name)}
+                                  className="text-xs text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1 hover:underline"
+                                  title="刪除此活動"
+                                >
+                                  <Icon name="trash" className="w-3.5 h-3.5" />
+                                  <span>刪除</span>
+                                </button>
+                              )}
+                            </div>
                           )}
 
                           {!isAdmin && onToggleSave && (
@@ -4631,9 +4680,10 @@
       }
 
       // --- 5.2 ADMIN CALENDAR TAB WITH SUB-CATEGORIES (活動表 & 月行事曆) ---
-      function AdminCalendarTab({ events, onAddEvent, onDeleteEvent }) {
+      function AdminCalendarTab({ events, onAddEvent, onUpdateEvent, onDeleteEvent }) {
         const [subTab, setSubTab] = useState('list'); // 'list' | 'month'
         const [isAddOpen, setIsAddOpen] = useState(false);
+        const [editingEvent, setEditingEvent] = useState(null);
         const [deptFilter, setDeptFilter] = useState('all');
         const [typeFilter, setTypeFilter] = useState('all');
 
@@ -4656,6 +4706,33 @@
           '國際交流',
         ];
 
+        const handleOpenAdd = (prefilledDate) => {
+          setEditingEvent(null);
+          setName('');
+          setType('機電整合組培訓');
+          if (prefilledDate) setDate(prefilledDate);
+          else setDate('2026-09-22');
+          setStartTime('18:00');
+          setEndTime('20:30');
+          setDepts(['機電整合組']);
+          setLocation('機器人實作工坊 (科學樓 B1)');
+          setDescription('');
+          setIsAddOpen(true);
+        };
+
+        const handleOpenEdit = (ev) => {
+          setEditingEvent(ev);
+          setName(ev.name || '');
+          setType(ev.type || '機電整合組培訓');
+          setDate(ev.date || '2026-09-22');
+          setStartTime(ev.startTime || '18:00');
+          setEndTime(ev.endTime || '20:30');
+          setDepts(ev.departments && ev.departments.length > 0 ? ev.departments : ['機電整合組']);
+          setLocation(ev.location || '');
+          setDescription(ev.description || '');
+          setIsAddOpen(true);
+        };
+
         const filtered = events.filter(e => {
           if (deptFilter !== 'all' && !e.departments.includes(deptFilter)) return false;
           if (typeFilter !== 'all' && e.type !== typeFilter) return false;
@@ -4665,8 +4742,34 @@
         const handleSubmit = (e) => {
           e.preventDefault();
           if (!name.trim()) return;
-          onAddEvent({ name: name.trim(), type, date, startTime, endTime, departments: depts, location, description });
+          if (editingEvent) {
+            if (onUpdateEvent) {
+              onUpdateEvent({
+                ...editingEvent,
+                name: name.trim(),
+                type,
+                date,
+                startTime,
+                endTime,
+                departments: depts,
+                location,
+                description,
+              });
+            }
+          } else {
+            onAddEvent({
+              name: name.trim(),
+              type,
+              date,
+              startTime,
+              endTime,
+              departments: depts,
+              location,
+              description,
+            });
+          }
           setIsAddOpen(false);
+          setEditingEvent(null);
           setName('');
           setDescription('');
         };
@@ -4682,7 +4785,7 @@
                 </div>
                 <h2 className="text-xl font-black text-zinc-900 tracking-tight">隊伍行事曆與公告設定</h2>
                 <p className="text-xs text-zinc-500 mt-1">
-                  支援切換「活動表」時序清單與「月行事曆」全月視圖，新增或刪除活動。
+                  支援切換「活動表」時序清單與「月行事曆」全月視圖，發布、編輯修正或刪除活動。
                 </p>
               </div>
 
@@ -4717,7 +4820,7 @@
 
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(true)}
+                  onClick={() => handleOpenAdd()}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors"
                 >
                   <Icon name="plus" className="w-4 h-4" />
@@ -4806,8 +4909,17 @@
                         {ev.description && <p className="text-xs text-zinc-500">{ev.description}</p>}
                       </div>
 
-                      <div className="self-end md:self-center">
+                      <div className="self-end md:self-center flex items-center gap-1">
                         <button
+                          type="button"
+                          onClick={() => handleOpenEdit(ev)}
+                          className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                          title="編輯活動內容 (修復錯字或時間)"
+                        >
+                          <Icon name="edit" className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => onDeleteEvent(ev.id, ev.name)}
                           className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                           title="刪除活動"
@@ -4828,20 +4940,33 @@
                   events={events}
                   isAdmin={true}
                   onDeleteEvent={onDeleteEvent}
-                  onOpenAddEvent={(prefilledDate) => {
-                    if (prefilledDate) setDate(prefilledDate);
-                    setIsAddOpen(true);
-                  }}
+                  onEditEvent={handleOpenEdit}
+                  onOpenAddEvent={(prefilledDate) => handleOpenAdd(prefilledDate)}
                 />
               </div>
             )}
 
-            {/* Add Event Modal */}
+            {/* Add / Edit Event Modal */}
             {isAddOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
                 <div className="bg-white border border-zinc-200 w-full max-w-lg rounded-2xl shadow-2xl p-6 overflow-hidden">
-                  <h3 className="text-base font-bold text-zinc-900 mb-1">發布團隊新活動</h3>
-                  <p className="text-xs text-zinc-500 mb-4">系統將自動依時間序近至遠嚴格排序公告</p>
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-100">
+                    <div>
+                      <h3 className="text-base font-bold text-zinc-900">
+                        {editingEvent ? '✏️ 編輯團隊活動內容' : '發布團隊新活動'}
+                      </h3>
+                      <p className="text-xs text-zinc-500">
+                        {editingEvent ? `正在編輯：「${editingEvent.name}」，修改後即時連動全隊` : '系統將自動依時間序近至遠嚴格排序公告'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setIsAddOpen(false); setEditingEvent(null); }}
+                      className="text-zinc-400 hover:text-zinc-700 p-1.5 rounded-lg"
+                    >
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
 
                   <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
@@ -4852,7 +4977,7 @@
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder="例如：機構加工與底盤組裝培訓"
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
 
@@ -4861,7 +4986,7 @@
                       <select
                         value={type}
                         onChange={(e) => setType(e.target.value)}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       >
                         {types.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
@@ -4875,7 +5000,7 @@
                           required
                           value={date}
                           onChange={(e) => setDate(e.target.value)}
-                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs"
+                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                         />
                       </div>
                       <div>
@@ -4885,7 +5010,7 @@
                           required
                           value={startTime}
                           onChange={(e) => setStartTime(e.target.value)}
-                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs"
+                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                         />
                       </div>
                       <div>
@@ -4895,7 +5020,7 @@
                           required
                           value={endTime}
                           onChange={(e) => setEndTime(e.target.value)}
-                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs"
+                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                         />
                       </div>
                     </div>
@@ -4913,8 +5038,8 @@
                                 const next = checked ? depts.filter(x => x !== d) : [...depts, d];
                                 if (next.length > 0) setDepts(next);
                               }}
-                              className={`px-3 py-1.5 rounded-lg border text-xs font-medium ${
-                                checked ? 'bg-orange-600 text-white border-orange-600' : 'bg-zinc-50 text-zinc-700'
+                              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                                checked ? 'bg-orange-600 text-white border-orange-600 shadow-2xs' : 'bg-zinc-50 text-zinc-700 hover:bg-zinc-100'
                               }`}
                             >
                               {checked && '✓ '} {d}
@@ -4930,7 +5055,8 @@
                         type="text"
                         value={location}
                         onChange={(e) => setLocation(e.target.value)}
-                        className="w-full p-2 border border-zinc-300 rounded-lg text-xs"
+                        placeholder="例如：機器人實作工坊 (科學樓 B1)"
+                        className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
 
@@ -4940,23 +5066,24 @@
                         rows={2}
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
-                        className="w-full p-2 border border-zinc-300 rounded-lg text-xs"
+                        placeholder="填寫活動細節、注意事項或準備事項"
+                        className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
 
                     <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
                       <button
                         type="button"
-                        onClick={() => setIsAddOpen(false)}
-                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs"
+                        onClick={() => { setIsAddOpen(false); setEditingEvent(null); }}
+                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-medium hover:bg-zinc-100"
                       >
                         取消
                       </button>
                       <button
                         type="submit"
-                        className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold"
+                        className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold shadow-xs"
                       >
-                        發布活動
+                        {editingEvent ? '儲存修改' : '發布活動'}
                       </button>
                     </div>
                   </form>
@@ -5524,8 +5651,78 @@
         );
       }
 
-      function AdminAttendanceTab({ records, members }) {
+      function AdminAttendanceTab({ records, members, onAddRecord, onDeleteRecord }) {
         const [weekOffset, setWeekOffset] = useState(0);
+
+        // Filter student-only members for attendance records (sorted naturally by ID)
+        const studentMembers = useMemo(() => {
+          return members
+            .filter(m => m.role !== 'admin' && m.id !== '10114-001' && !(m.id && m.id.startsWith('10114-ADM')))
+            .sort((a, b) => (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' }));
+        }, [members]);
+
+        // Attendance Record Creation Modal State
+        const [isModalOpen, setIsModalOpen] = useState(false);
+        const [formStudentId, setFormStudentId] = useState(studentMembers[0]?.id || '10114-002');
+        const [formDate, setFormDate] = useState('2026-09-18');
+        const [formType, setFormType] = useState('attendance'); // 'attendance' | 'leave' | 'unexcused'
+        const [formSlots, setFormSlots] = useState(['evening']);
+        const [formReason, setFormReason] = useState('');
+        const [formErr, setFormErr] = useState('');
+
+        useEffect(() => {
+          if (studentMembers.length > 0 && !studentMembers.some(s => s.id === formStudentId)) {
+            setFormStudentId(studentMembers[0].id);
+          }
+        }, [studentMembers]);
+
+        const handleOpenModal = (prefilledDate) => {
+          if (prefilledDate) setFormDate(prefilledDate);
+          else setFormDate('2026-09-18');
+          if (studentMembers.length > 0 && !studentMembers.some(s => s.id === formStudentId)) {
+            setFormStudentId(studentMembers[0].id);
+          }
+          setFormReason('');
+          setFormErr('');
+          setIsModalOpen(true);
+        };
+
+        const toggleSlot = (slot) => {
+          if (formSlots.includes(slot)) {
+            if (formSlots.length === 1) return; // Keep at least one slot
+            setFormSlots(formSlots.filter(s => s !== slot));
+          } else {
+            setFormSlots([...formSlots, slot]);
+          }
+        };
+
+        const handleFormSubmit = (e) => {
+          e.preventDefault();
+          const st = studentMembers.find(m => m.id === formStudentId) || members.find(m => m.id === formStudentId);
+          if (!st) {
+            setFormErr('請選擇欲登記的學生');
+            return;
+          }
+          if (formSlots.length === 0) {
+            setFormErr('請至少勾選一個到校/請假時段');
+            return;
+          }
+          if (formType === 'leave' && !formReason.trim()) {
+            setFormErr('請假必須填寫事由說明');
+            return;
+          }
+          if (onAddRecord) {
+            onAddRecord({
+              studentId: st.id,
+              studentName: st.name,
+              date: formDate,
+              type: formType,
+              slots: formSlots,
+              reason: formReason.trim() || (formType === 'unexcused' ? '未依規請假缺席' : undefined),
+            });
+          }
+          setIsModalOpen(false);
+        };
 
         const baseMonday = new Date(2026, 8, 14);
         const curMon = new Date(baseMonday);
@@ -5542,7 +5739,7 @@
             dateStr: `${yyyy}-${mm}-${dd}`,
             display: `${d.getMonth() + 1}月${d.getDate()}日`,
             dayName: names[d.getDay()],
-            isToday: `${yyyy}-${mm}-${dd}` === '2026-09-17',
+            isToday: `${yyyy}-${mm}-${dd}` === '2026-09-18',
           };
         });
 
@@ -5554,35 +5751,46 @@
               <div>
                 <div className="flex items-center gap-1.5 text-xs font-bold text-orange-600 uppercase mb-1">
                   <Icon name="clock" className="w-3.5 h-3.5" />
-                  <span>Attendance Weekly Matrix</span>
+                  <span>Attendance & Leave Management</span>
                 </div>
-                <h2 className="text-xl font-black text-zinc-900">到校學習與請假週曆列表</h2>
+                <h2 className="text-xl font-black text-zinc-900">到校學習、請假與考勤週表</h2>
                 <p className="text-xs text-zinc-500 mt-1">
-                  以「週」為形式呈現，點擊下週或上週可查看其他時間的留校與請假人員。列出一週七天完整名冊。
+                  以「週」為形式呈現，管理員可自由登記或刪除學生的留校出席、事前請假或未請假缺席名冊。
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 bg-zinc-50 p-1 rounded-xl border border-zinc-200 self-start md:self-auto text-xs">
+              <div className="flex items-center gap-3 self-start md:self-auto flex-wrap">
                 <button
-                  onClick={() => setWeekOffset(weekOffset - 1)}
-                  className="px-3 py-1.5 font-semibold text-zinc-700 hover:bg-white rounded-lg flex items-center gap-1"
+                  type="button"
+                  onClick={() => handleOpenModal()}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors"
                 >
-                  <Icon name="chevronLeft" className="w-4 h-4" />
-                  <span>上週</span>
+                  <Icon name="plus" className="w-4 h-4" />
+                  <span>登記留校 / 請假 / 未請假</span>
                 </button>
-                <button
-                  onClick={() => setWeekOffset(0)}
-                  className={`px-3 py-1.5 font-bold rounded-lg ${weekOffset === 0 ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-white'}`}
-                >
-                  本週
-                </button>
-                <button
-                  onClick={() => setWeekOffset(weekOffset + 1)}
-                  className="px-3 py-1.5 font-semibold text-zinc-700 hover:bg-white rounded-lg flex items-center gap-1"
-                >
-                  <span>下週</span>
-                  <Icon name="chevronRight" className="w-4 h-4" />
-                </button>
+
+                <div className="flex items-center gap-1 bg-zinc-50 p-1 rounded-xl border border-zinc-200 text-xs">
+                  <button
+                    onClick={() => setWeekOffset(weekOffset - 1)}
+                    className="px-3 py-1.5 font-semibold text-zinc-700 hover:bg-white rounded-lg flex items-center gap-1"
+                  >
+                    <Icon name="chevronLeft" className="w-4 h-4" />
+                    <span>上週</span>
+                  </button>
+                  <button
+                    onClick={() => setWeekOffset(0)}
+                    className={`px-3 py-1.5 font-bold rounded-lg ${weekOffset === 0 ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-white'}`}
+                  >
+                    本週
+                  </button>
+                  <button
+                    onClick={() => setWeekOffset(weekOffset + 1)}
+                    className="px-3 py-1.5 font-semibold text-zinc-700 hover:bg-white rounded-lg flex items-center gap-1"
+                  >
+                    <span>下週</span>
+                    <Icon name="chevronRight" className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -5595,6 +5803,7 @@
                 const dayRecs = records.filter(r => r.date === day.dateStr);
                 const presents = dayRecs.filter(r => r.type === 'attendance');
                 const leaves = dayRecs.filter(r => r.type === 'leave');
+                const unexcused = dayRecs.filter(r => r.type === 'unexcused');
 
                 return (
                   <div
@@ -5608,14 +5817,26 @@
                         <span className="font-extrabold text-sm text-zinc-900">{day.display}</span>
                         <span className="text-xs font-semibold px-2 py-0.5 rounded bg-zinc-200 text-zinc-700">{day.dayName}</span>
                       </div>
-                      {day.isToday && (
-                        <span className="text-[10px] font-extrabold text-white bg-orange-600 px-2 py-0.5 rounded">
-                          TODAY
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {day.isToday && (
+                          <span className="text-[10px] font-extrabold text-white bg-orange-600 px-2 py-0.5 rounded">
+                            TODAY
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenModal(day.dateStr)}
+                          className="text-[11px] font-bold text-orange-600 hover:text-orange-700 bg-white hover:bg-orange-100 border border-orange-200 rounded px-2 py-0.5 shadow-2xs flex items-center gap-0.5 transition-colors"
+                          title="在此日登記留校/請假/未請假"
+                        >
+                          <Icon name="plus" className="w-3 h-3" />
+                          <span>登記</span>
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="p-3.5 space-y-3 flex-1 text-xs">
+                    <div className="p-3.5 space-y-3.5 flex-1 text-xs">
+                      {/* 1. 留校名單 */}
                       <div>
                         <span className="font-bold text-emerald-800 block mb-1">
                           🟢 留校名單 ({presents.length} 人)
@@ -5625,15 +5846,29 @@
                         ) : (
                           <div className="space-y-1">
                             {presents.map(p => (
-                              <div key={p.id} className="p-1.5 bg-emerald-50/60 rounded border border-emerald-200 flex justify-between">
-                                <span className="font-bold text-zinc-900">{p.studentName}</span>
-                                <span className="text-[10px] font-mono text-zinc-600">{p.slots.map(s => slotMap[s]).join(', ')}</span>
+                              <div key={p.id} className="p-1.5 bg-emerald-50/60 rounded border border-emerald-200 flex items-center justify-between group">
+                                <div className="min-w-0 flex-1">
+                                  <span className="font-bold text-zinc-900 mr-2">{p.studentName}</span>
+                                  <span className="text-[10px] font-mono text-zinc-600">{p.slots.map(s => slotMap[s]).join(', ')}</span>
+                                  {p.reason && <span className="text-[10px] text-zinc-500 italic block mt-0.5">備註：{p.reason}</span>}
+                                </div>
+                                {onDeleteRecord && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onDeleteRecord(p.id, p.studentName, day.dateStr, '留校出席')}
+                                    className="text-zinc-400 hover:text-rose-600 p-1 rounded hover:bg-white transition-colors flex-shrink-0"
+                                    title={`刪除 ${p.studentName} 的留校紀錄`}
+                                  >
+                                    <Icon name="trash" className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             ))}
                           </div>
                         )}
                       </div>
 
+                      {/* 2. 請假人員 */}
                       <div>
                         <span className="font-bold text-amber-800 block mb-1">
                           🟠 請假人員 ({leaves.length} 人)
@@ -5643,12 +5878,61 @@
                         ) : (
                           <div className="space-y-1">
                             {leaves.map(l => (
-                              <div key={l.id} className="p-1.5 bg-amber-50/60 rounded border border-amber-200 text-xs">
-                                <div className="flex justify-between">
-                                  <span className="font-bold text-zinc-900">{l.studentName}</span>
-                                  <span className="text-[10px] text-zinc-500 font-mono">{l.slots.map(s => slotMap[s]).join(', ')}</span>
+                              <div key={l.id} className="p-1.5 bg-amber-50/60 rounded border border-amber-200 text-xs flex items-center justify-between group">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex justify-between items-center pr-1">
+                                    <span className="font-bold text-zinc-900">{l.studentName}</span>
+                                    <span className="text-[10px] text-zinc-500 font-mono">{l.slots.map(s => slotMap[s]).join(', ')}</span>
+                                  </div>
+                                  {l.reason && <p className="text-[10px] text-zinc-600 italic mt-0.5">事由：{l.reason}</p>}
                                 </div>
-                                {l.reason && <p className="text-[10px] text-zinc-500 italic mt-0.5">事由：{l.reason}</p>}
+                                {onDeleteRecord && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onDeleteRecord(l.id, l.studentName, day.dateStr, '請假')}
+                                    className="text-zinc-400 hover:text-rose-600 p-1 rounded hover:bg-white transition-colors flex-shrink-0"
+                                    title={`刪除 ${l.studentName} 的請假紀錄`}
+                                  >
+                                    <Icon name="trash" className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. 未請假人員 */}
+                      <div>
+                        <span className="font-bold text-rose-800 block mb-1">
+                          🔴 未請假人員 ({unexcused.length} 人)
+                        </span>
+                        {unexcused.length === 0 ? (
+                          <p className="text-zinc-400 text-[11px] italic">無未請假缺席人員</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {unexcused.map(u => (
+                              <div key={u.id} className="p-1.5 bg-rose-50/70 rounded border border-rose-200 text-xs flex items-center justify-between group">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex justify-between items-center pr-1">
+                                    <span className="font-bold text-rose-950 flex items-center gap-1">
+                                      <span>{u.studentName}</span>
+                                      <span className="text-[9px] px-1 bg-rose-200 text-rose-800 rounded font-black">未請假</span>
+                                    </span>
+                                    <span className="text-[10px] text-rose-700 font-mono">{u.slots.map(s => slotMap[s]).join(', ')}</span>
+                                  </div>
+                                  <p className="text-[10px] text-rose-600 italic mt-0.5">備註：{u.reason || '未依規定請假缺席'}</p>
+                                </div>
+                                {onDeleteRecord && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onDeleteRecord(u.id, u.studentName, day.dateStr, '未請假')}
+                                    className="text-zinc-400 hover:text-rose-600 p-1 rounded hover:bg-white transition-colors flex-shrink-0"
+                                    title={`刪除 ${u.studentName} 的未請假紀錄`}
+                                  >
+                                    <Icon name="trash" className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -5659,6 +5943,176 @@
                 );
               })}
             </div>
+
+            {/* Attendance Record Modal */}
+            {isModalOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+                <div className="bg-white border border-zinc-200 w-full max-w-lg rounded-2xl shadow-2xl p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 bg-orange-50 text-orange-600 rounded-lg">
+                        <Icon name="clock" className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-zinc-900">管理員登記考勤與請假</h3>
+                        <p className="text-xs text-zinc-500">可為隊員登記留校實作、事前請假或標記未請假缺席</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsModalOpen(false)}
+                      className="text-zinc-400 hover:text-zinc-700 p-1.5 rounded-lg"
+                    >
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleFormSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">指定隊員 *</label>
+                      <select
+                        value={formStudentId}
+                        onChange={(e) => { setFormStudentId(e.target.value); setFormErr(''); }}
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                      >
+                        {studentMembers.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.id} - {s.name} ({s.departments ? s.departments.join('/') : '隊員'})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">日期 *</label>
+                      <input
+                        type="date"
+                        required
+                        value={formDate}
+                        onChange={(e) => setFormDate(e.target.value)}
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1.5">登記考勤類別 *</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setFormType('attendance'); setFormErr(''); }}
+                          className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition-all ${
+                            formType === 'attendance'
+                              ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20 shadow-xs'
+                              : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <span className="text-sm">🟢</span>
+                          <span>留校實作</span>
+                          <span className="text-[10px] font-normal text-zinc-400">到校出席</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => { setFormType('leave'); setFormErr(''); }}
+                          className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition-all ${
+                            formType === 'leave'
+                              ? 'bg-amber-50 border-amber-500 text-amber-800 ring-2 ring-amber-500/20 shadow-xs'
+                              : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <span className="text-sm">🟠</span>
+                          <span>事前請假</span>
+                          <span className="text-[10px] font-normal text-zinc-400">事假 / 病假</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => { setFormType('unexcused'); setFormErr(''); }}
+                          className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition-all ${
+                            formType === 'unexcused'
+                              ? 'bg-rose-50 border-rose-500 text-rose-800 ring-2 ring-rose-500/20 shadow-xs'
+                              : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <span className="text-sm">🔴</span>
+                          <span>未請假</span>
+                          <span className="text-[10px] font-normal text-rose-500 font-bold">缺席未請假</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1.5">時段選擇 (可複選) *</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { id: 'morning', label: '早 09-12' },
+                          { id: 'afternoon', label: '午 13-17' },
+                          { id: 'evening', label: '晚 18-21' },
+                        ].map(s => {
+                          const checked = formSlots.includes(s.id);
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => toggleSlot(s.id)}
+                              className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
+                                checked
+                                  ? 'bg-orange-600 text-white border-orange-600 shadow-2xs'
+                                  : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                              }`}
+                            >
+                              {checked && '✓ '}{s.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">
+                        {formType === 'leave' ? '請假事由 *' : formType === 'unexcused' ? '未請假說明備註 (選填)' : '留校備註說明 (選填)'}
+                      </label>
+                      <input
+                        type="text"
+                        value={formReason}
+                        onChange={(e) => setFormReason(e.target.value)}
+                        placeholder={
+                          formType === 'leave'
+                            ? '例如：合唱團練習、數理資優班補課'
+                            : formType === 'unexcused'
+                            ? '例如：未告知缺席，已致電家長確認'
+                            : '例如：底盤機構組裝衝刺'
+                        }
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    {formErr && (
+                      <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg font-bold flex items-center gap-2">
+                        <Icon name="alert" className="w-4 h-4 flex-shrink-0" />
+                        <span>{formErr}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
+                      <button
+                        type="button"
+                        onClick={() => setIsModalOpen(false)}
+                        className="px-4 py-2 border border-zinc-200 text-zinc-600 hover:bg-zinc-100 rounded-lg text-xs font-medium"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-lg text-xs shadow-xs"
+                      >
+                        確認登記
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
         );
       }
@@ -6873,12 +7327,16 @@
                     <div key={r.id} className="p-2.5 bg-zinc-50 rounded-lg border border-zinc-200 text-xs">
                       <div className="flex justify-between font-bold">
                         <span>{r.date}</span>
-                        <span className={r.type === 'attendance' ? 'text-emerald-700' : 'text-amber-700'}>
-                          {r.type === 'attendance' ? '留校實作' : '請假'}
+                        <span className={
+                          r.type === 'attendance' ? 'text-emerald-700' :
+                          r.type === 'leave' ? 'text-amber-700' :
+                          'text-rose-700'
+                        }>
+                          {r.type === 'attendance' ? '留校實作' : r.type === 'leave' ? '請假' : '未請假'}
                         </span>
                       </div>
                       <div className="text-[11px] text-zinc-500 font-mono mt-0.5">{r.slots.map(s => slotMap[s]).join(', ')}</div>
-                      {r.reason && <div className="text-[10px] text-zinc-400 italic">事由：{r.reason}</div>}
+                      {r.reason && <div className="text-[10px] text-zinc-400 italic">{r.type === 'unexcused' ? '備註：' : '事由：'}{r.reason}</div>}
                     </div>
                   ))}
                 </div>
@@ -6963,12 +7421,16 @@
                     <div key={r.id} className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-xs">
                       <div className="flex justify-between font-bold">
                         <span>{r.date}</span>
-                        <span className={r.type === 'attendance' ? 'text-emerald-700' : 'text-amber-700'}>
-                          {r.type === 'attendance' ? '留校實作' : '請假'}
+                        <span className={
+                          r.type === 'attendance' ? 'text-emerald-700' :
+                          r.type === 'leave' ? 'text-amber-700' :
+                          'text-rose-700'
+                        }>
+                          {r.type === 'attendance' ? '留校實作' : r.type === 'leave' ? '請假' : '未請假'}
                         </span>
                       </div>
                       <div className="text-[11px] text-zinc-500 font-mono mt-1">{r.slots.map(s => slotMap[s]).join(', ')}</div>
-                      {r.reason && <div className="text-[10px] text-zinc-400 italic mt-0.5">事由：{r.reason}</div>}
+                      {r.reason && <div className="text-[10px] text-zinc-400 italic mt-0.5">{r.type === 'unexcused' ? '備註：' : '事由：'}{r.reason}</div>}
                     </div>
                   ))
                 )}
@@ -6991,6 +7453,7 @@
                   const dayRecs = attendanceRecords.filter(r => r.date === day.dateStr);
                   const presents = dayRecs.filter(r => r.type === 'attendance');
                   const leaves = dayRecs.filter(r => r.type === 'leave');
+                  const unexcused = dayRecs.filter(r => r.type === 'unexcused');
 
                   return (
                     <div key={day.dateStr} className="bg-white border border-zinc-200 rounded-xl p-3.5 shadow-xs text-xs space-y-2">
@@ -7018,6 +7481,18 @@
                           ))}
                         </div>
                       </div>
+                      {unexcused.length > 0 && (
+                        <div>
+                          <span className="text-rose-800 font-bold block text-[11px]">未請假 ({unexcused.length}人):</span>
+                          <div className="space-y-1 mt-1">
+                            {unexcused.map(u => (
+                              <div key={u.id} className={`p-1 rounded ${u.studentName === studentName ? 'bg-rose-100 font-bold text-rose-950' : 'bg-rose-50 text-rose-800'}`}>
+                                {u.studentName} {u.studentName === studentName && '★(貴子弟)'} {u.reason ? `(${u.reason})` : ''}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -7160,14 +7635,18 @@
           const slotName = s => s === 'morning' ? '上午' : s === 'afternoon' ? '下午' : s === 'evening' ? '晚上' : s;
           exportToCSV(
             `FRC10114_到校學習與請假週表_${getTodayStr()}.csv`,
-            ['紀錄編號', '日期', '隊員姓名', '隊員編號', '類型', '到校時段/請假事由', '登記送出時間'],
+            ['紀錄編號', '日期', '隊員姓名', '隊員編號', '類型', '到校時段/請假事由/備註', '登記送出時間'],
             attendance.map(a => [
               a.id,
               a.date,
               a.studentName,
               a.studentId,
-              a.type === 'attendance' ? '到校出席' : '請假',
-              a.type === 'attendance' ? (a.slots || []).map(slotName).join('、') : (a.reason || '事假'),
+              a.type === 'attendance' ? '到校出席' : a.type === 'leave' ? '請假' : '未請假',
+              a.type === 'attendance'
+                ? (a.slots || []).map(slotName).join('、')
+                : a.type === 'leave'
+                  ? (a.reason || '事假')
+                  : (a.reason ? `未請假 (備註: ${a.reason})` : '未請假缺席'),
               a.submittedAt || ''
             ])
           );
