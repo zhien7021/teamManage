@@ -1192,6 +1192,13 @@
           );
         }, [events]);
 
+        // Auto sorted members by ID / number ascending
+        const sortedMembers = useMemo(() => {
+          return [...members].sort((a, b) =>
+            (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' })
+          );
+        }, [members]);
+
         // Handle Add New Admin Coach
         const handleCreateAdmin = (adminData) => {
           const newAdmin = {
@@ -1666,7 +1673,7 @@
         if (!isAuthenticated) {
           return (
             <RoleLoginModal
-              members={members}
+              members={sortedMembers}
               isPageMode={true}
               onSelectRole={handleLoginSelect}
             />
@@ -1752,14 +1759,16 @@
                     </button>
                   )}
 
-                  <button
-                    onClick={() => setIsExportModalOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-lg shadow-2xs transition-colors"
-                    title="匯出各項表格 (CSV) 或完整 JSON 備份檔"
-                  >
-                    <Icon name="download" className="w-3.5 h-3.5" />
-                    <span>下載資料</span>
-                  </button>
+                  {currentRole === 'admin' && (
+                    <button
+                      onClick={() => setIsExportModalOpen(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-lg shadow-2xs transition-colors"
+                      title="匯出各項表格 (CSV) 或完整 JSON 備份檔 (管理員專用)"
+                    >
+                      <Icon name="download" className="w-3.5 h-3.5" />
+                      <span>下載資料</span>
+                    </button>
+                  )}
 
                   <button
                     onClick={handleLogout}
@@ -1915,7 +1924,7 @@
                           onChange={(e) => handleSwitchMember(e.target.value)}
                           className="w-full p-2.5 bg-zinc-50 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:bg-white focus:ring-2 focus:ring-orange-500"
                         >
-                          {members.map(m => (
+                          {sortedMembers.map(m => (
                             <option key={m.id} value={m.id}>
                               {m.id} - {m.name} {m.role === 'admin' ? '🛡️ (管理員)' : ''} ({m.email})
                             </option>
@@ -1925,10 +1934,10 @@
 
                       <div>
                         <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block mb-2">
-                          名冊列表 ({members.length} 位隊員)
+                          名冊列表 ({sortedMembers.length} 位隊員，依編號排序)
                         </span>
                         <div className="space-y-1.5 max-h-[380px] overflow-y-auto pr-1">
-                          {members.map(m => {
+                          {sortedMembers.map(m => {
                             const isCur = m.id === selectedMemberId;
                             return (
                               <button
@@ -2276,7 +2285,7 @@
                 <AdminTaskReviewTab
                   tasks={tasks}
                   pendingTasks={pendingTasks}
-                  members={members}
+                  members={sortedMembers}
                   onVerify={handleVerifyTask}
                   onAddTask={handleAddTask}
                   onDeleteTask={handleDeleteTask}
@@ -2291,7 +2300,7 @@
                 <UnifiedEquipmentModule
                   isAdmin={currentRole === 'admin'}
                   currentMember={currentMember}
-                  members={members}
+                  members={sortedMembers}
                   materials={materials}
                   reservations={machineReservations}
                   eduEquipment={eduEquipment}
@@ -2324,7 +2333,7 @@
 
               {/* ADMIN VIEW 5: 到校學習/請假列表 */}
               {currentRole === 'admin' && activeTab === 'attendance' && (
-                <AdminAttendanceTab records={attendance} members={members} />
+                <AdminAttendanceTab records={attendance} members={sortedMembers} />
               )}
 
               {/* ADMIN VIEW 6: 教練個人資料與設定 */}
@@ -2570,7 +2579,7 @@
             {/* --- ROLE LOGIN MODAL --- */}
             {isLoginModalOpen && (
               <RoleLoginModal
-                members={members}
+                members={sortedMembers}
                 onClose={() => setIsLoginModalOpen(false)}
                 onSelectRole={handleLoginSelect}
               />
@@ -2581,7 +2590,7 @@
               isOpen={isAddAdminModalOpen}
               onClose={() => setIsAddAdminModalOpen(false)}
               onCreateAdmin={handleCreateAdmin}
-              members={members}
+              members={sortedMembers}
             />
 
             {/* --- FIREBASE CLOUD CONFIG MODAL (ADMIN ONLY) --- */}
@@ -5706,10 +5715,7 @@
             alert('姓名不得為空');
             return;
           }
-          if (editDepartments.length === 0) {
-            alert('請至少勾選一個組別');
-            return;
-          }
+          const finalDepartments = member.role === 'admin' ? editDepartments : member.departments;
           if (onUpdateProfile) {
             const ok = onUpdateProfile({
               id: member.id,
@@ -5717,7 +5723,7 @@
               phone: editPhone.trim(),
               email: editEmail.trim(),
               motto: editMotto.trim(),
-              departments: editDepartments,
+              departments: finalDepartments,
             });
             if (ok) {
               setIsEditProfileOpen(false);
@@ -6239,28 +6245,48 @@
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-1">所屬組別 (至少選一組) *</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {['機電整合組', '程式控制組', '行銷管理組'].map(deptName => {
-                          const checked = editDepartments.includes(deptName);
-                          return (
-                            <button
-                              key={deptName}
-                              type="button"
-                              onClick={() => toggleEditDept(deptName)}
-                              className={`p-2 rounded-lg border text-xs font-bold transition-all text-center cursor-pointer ${
-                                checked
-                                  ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-2xs'
-                                  : 'bg-zinc-50 border-zinc-200 text-zinc-500 hover:bg-zinc-100'
-                              }`}
-                            >
-                              {checked ? '✓ ' : ''}{deptName}
-                            </button>
-                          );
-                        })}
+                    {member.role === 'admin' ? (
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">督導組別 (可複選)</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {['機電整合組', '程式控制組', '行銷管理組'].map(deptName => {
+                            const checked = editDepartments.includes(deptName);
+                            return (
+                              <button
+                                key={deptName}
+                                type="button"
+                                onClick={() => toggleEditDept(deptName)}
+                                className={`p-2 rounded-lg border text-xs font-bold transition-all text-center cursor-pointer ${
+                                  checked
+                                    ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-2xs'
+                                    : 'bg-zinc-50 border-zinc-200 text-zinc-500 hover:bg-zinc-100'
+                                }`}
+                              >
+                                {checked ? '✓ ' : ''}{deptName}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="block text-xs font-bold text-zinc-700">所屬組別</label>
+                          <span className="text-[10px] text-zinc-400 font-medium">由管理員統一設定，選手不可自行修改</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 p-2.5 bg-zinc-50 border border-zinc-200 rounded-lg">
+                          {member.departments && member.departments.length > 0 ? (
+                            member.departments.map(d => (
+                              <span key={d} className="px-3 py-1 bg-orange-600 text-white rounded-md text-xs font-bold shadow-2xs">
+                                ✓ {d}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-zinc-400 text-xs italic">尚未分配組別</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     <div>
                       <label className="block text-xs font-bold text-zinc-700 mb-1">給自己的一句話 (座右銘)</label>
@@ -8079,28 +8105,58 @@
         const [tab, setTab] = useState('admin');
 
         // Admin Auth State
-        const adminMembers = members.filter(m => m.role === 'admin' || m.id === '10114-001');
+        const adminMembers = useMemo(() => {
+          return members
+            .filter(m => m.role === 'admin' || m.id === '10114-001' || (m.id && m.id.startsWith('10114-ADM')))
+            .sort((a, b) => (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' }));
+        }, [members]);
+
+        // Student Members (strictly excluding coaches and admins)
+        const studentMembers = useMemo(() => {
+          return members
+            .filter(m => m.role !== 'admin' && m.id !== '10114-001' && !(m.id && m.id.startsWith('10114-ADM')))
+            .sort((a, b) => (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' }));
+        }, [members]);
+
         const [selectedAdminId, setSelectedAdminId] = useState(adminMembers[0]?.id || '10114-001');
         const [adminPassword, setAdminPassword] = useState('');
         const [showAdminPass, setShowAdminPass] = useState(false);
         const [adminErr, setAdminErr] = useState('');
 
         // Member Auth State
-        const [memberId, setMemberId] = useState(members.find(m => m.role !== 'admin')?.id || members[1]?.id || members[0]?.id);
+        const [memberId, setMemberId] = useState(studentMembers[0]?.id || '10114-002');
         const [memberPassword, setMemberPassword] = useState('');
         const [showMemberPass, setShowMemberPass] = useState(false);
         const [memberErr, setMemberErr] = useState('');
 
         // Parent Auth State
-        const [parentStudentName, setParentStudentName] = useState('林恩萱');
+        const [parentStudentId, setParentStudentId] = useState(studentMembers[0]?.id || '10114-002');
         const [parentPassword, setParentPassword] = useState('');
         const [showParentPass, setShowParentPass] = useState(false);
         const [parentErr, setParentErr] = useState('');
 
+        useEffect(() => {
+          if (adminMembers.length > 0 && !adminMembers.some(a => a.id === selectedAdminId)) {
+            setSelectedAdminId(adminMembers[0].id);
+          }
+        }, [adminMembers]);
+
+        useEffect(() => {
+          if (studentMembers.length > 0 && !studentMembers.some(s => s.id === memberId)) {
+            setMemberId(studentMembers[0].id);
+          }
+        }, [studentMembers]);
+
+        useEffect(() => {
+          if (studentMembers.length > 0 && !studentMembers.some(s => s.id === parentStudentId)) {
+            setParentStudentId(studentMembers[0].id);
+          }
+        }, [studentMembers]);
+
         // Admin Submit Handler
         const handleAdminSubmit = (e) => {
           e.preventDefault();
-          const targetAdmin = members.find(m => m.id === selectedAdminId) || adminMembers[0] || members[0];
+          const targetAdmin = adminMembers.find(m => m.id === selectedAdminId) || adminMembers[0] || members[0];
           const expected = targetAdmin?.password || '10114admin';
           if (adminPassword.trim() !== expected) {
             setAdminErr('管理員密碼錯誤！請重新輸入（預設密碼：10114admin）');
@@ -8113,7 +8169,11 @@
         // Member Submit Handler
         const handleMemberSubmit = (e) => {
           e.preventDefault();
-          const targetMember = members.find(m => m.id === memberId) || members[0];
+          const targetMember = studentMembers.find(m => m.id === memberId) || studentMembers[0];
+          if (!targetMember) {
+            setMemberErr('無可登入的隊員帳號');
+            return;
+          }
           const expected = targetMember?.password || '10114';
           if (memberPassword.trim() !== expected) {
             setMemberErr('隊員密碼錯誤！請重新輸入（預設密碼：10114）');
@@ -8126,23 +8186,23 @@
         // Parent Submit Handler
         const handleParentSubmit = (e) => {
           e.preventDefault();
-          const clean = parentStudentName.replace(/家長$/, '').trim();
-          if (!clean) {
-            setParentErr('請輸入欲關心的學生姓名（例：林恩萱）');
+          const selectedStudent = studentMembers.find(m => m.id === parentStudentId) || studentMembers[0];
+          if (!selectedStudent) {
+            setParentErr('請先選擇欲關心的學生');
             return;
           }
-          const matchedStudent = members.find(m => m.name.includes(clean) || clean.includes(m.name));
-          const expectedPass = matchedStudent ? (matchedStudent.password || '10114') : '10114';
+          const expectedPass = selectedStudent?.password || '10114';
           if (parentPassword.trim() !== expectedPass && parentPassword.trim() !== '10114') {
             setParentErr('家長安全通關碼錯誤！（預設密碼與學生相同為：10114）');
             return;
           }
           setParentErr('');
-          onSelectRole('parent', undefined, clean);
+          onSelectRole('parent', undefined, selectedStudent.name);
         };
 
-        const currentSelMember = members.find(m => m.id === memberId) || members[0];
-        const currentSelAdmin = members.find(m => m.id === selectedAdminId) || adminMembers[0] || members[0];
+        const currentSelAdmin = adminMembers.find(m => m.id === selectedAdminId) || adminMembers[0];
+        const currentSelMember = studentMembers.find(m => m.id === memberId) || studentMembers[0];
+        const currentSelStudentForParent = studentMembers.find(m => m.id === parentStudentId) || studentMembers[0];
 
         const outerClass = isPageMode
           ? "min-h-screen bg-[#fafafa] flex flex-col items-center justify-center p-4 sm:p-6"
@@ -8226,7 +8286,7 @@
                         className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900"
                       >
                         {adminMembers.map(a => (
-                          <option key={a.id} value={a.id}>{a.name} ({a.id}) - {a.email}</option>
+                          <option key={a.id} value={a.id}>{a.name} ({a.id})</option>
                         ))}
                       </select>
                     </div>
@@ -8246,7 +8306,7 @@
                             <span className="font-mono text-[11px] text-zinc-400">({currentSelAdmin.id})</span>
                             <span className="px-1.5 py-0.5 text-[10px] font-bold bg-orange-100 text-orange-700 rounded">管理員</span>
                           </div>
-                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">{currentSelAdmin.email}</div>
+                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">FRC 10114 指導教練 / 系統管理</div>
                         </div>
                       </div>
                     )}
@@ -8301,8 +8361,10 @@
                         onChange={(e) => { setMemberId(e.target.value); setMemberErr(''); }}
                         className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900"
                       >
-                        {members.map(m => (
-                          <option key={m.id} value={m.id}>{m.id} - {m.name} ({m.departments.join('/')})</option>
+                        {studentMembers.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.id} - {m.name} ({m.departments ? m.departments.join('/') : ''})
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -8320,11 +8382,10 @@
                           <div className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
                             <span>{currentSelMember.name}</span>
                             <span className="font-mono text-[11px] text-zinc-400">({currentSelMember.id})</span>
-                            {currentSelMember.role === 'admin' && (
-                              <span className="px-1.5 py-0.2 text-[10px] font-bold bg-orange-100 text-orange-700 rounded">教練</span>
-                            )}
                           </div>
-                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">{currentSelMember.departments.join(' · ')}</div>
+                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">
+                            {currentSelMember.departments ? currentSelMember.departments.join(' · ') : ''}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -8375,36 +8436,45 @@
                     <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl text-xs text-orange-950 flex items-start gap-2.5">
                       <Icon name="heart" className="w-4 h-4 text-orange-600 flex-shrink-0 mt-0.5" />
                       <div>
-                        <strong>家長關心通道：</strong>可即時查看孩子的留校實作考勤、請假審核狀態與近期重要賽事行事曆。
+                        <strong>家長關心通道：</strong>請從隊員名冊中選擇您的孩子，登入後可即時查看其留校實作考勤、請假審核狀態與近期重要賽事行事曆。
                       </div>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-1">欲關心之學生姓名</label>
-                      <input
-                        type="text"
-                        value={parentStudentName}
-                        onChange={(e) => { setParentStudentName(e.target.value); setParentErr(''); }}
-                        placeholder="例: 林恩萱"
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
-                      />
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">選擇學生姓名（孩子）</label>
+                      <select
+                        value={parentStudentId}
+                        onChange={(e) => { setParentStudentId(e.target.value); setParentErr(''); }}
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                      >
+                        {studentMembers.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} ({s.id} · {s.departments ? s.departments.join('/') : '無組別'})
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      <span className="text-[11px] text-zinc-400 font-medium mr-1">快速選取:</span>
-                      {['林恩萱', '王小明', '陳大明', '張詠晴', '廖子涵'].map(chip => (
-                        <button
-                          key={chip}
-                          type="button"
-                          onClick={() => { setParentStudentName(chip); setParentErr(''); }}
-                          className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${
-                            parentStudentName === chip ? 'bg-orange-600 text-white' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
-                          }`}
-                        >
-                          {chip}
-                        </button>
-                      ))}
-                    </div>
+                    {currentSelStudentForParent && (
+                      <div className="flex items-center gap-3 p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+                        <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 border border-orange-200 flex items-center justify-center font-bold text-sm overflow-hidden flex-shrink-0">
+                          {currentSelStudentForParent.avatar ? (
+                            <img src={currentSelStudentForParent.avatar} alt={currentSelStudentForParent.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <span>{currentSelStudentForParent.name.slice(0, 1)}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
+                            <span>{currentSelStudentForParent.name} 的家長</span>
+                            <span className="font-mono text-[11px] text-zinc-400">({currentSelStudentForParent.id})</span>
+                          </div>
+                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">
+                            所屬：{currentSelStudentForParent.departments ? currentSelStudentForParent.departments.join(' · ') : '尚未分配'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     <div>
                       <div className="flex items-center justify-between mb-1">
