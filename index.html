@@ -501,7 +501,10 @@
           title: 'MARC 訓練機器人進球滾輪機構公差修整',
           department: '機電整合組',
           description: '調整矽膠滾輪與聚碳酸酯導板間距，確保進球順暢不卡彈。',
-          status: 'todo',
+          status: 'in_progress',
+          assigneeId: '10114-008',
+          assigneeName: '王小明',
+          claimedAt: '2026-09-16 10:30',
           createdAt: '2026-09-15',
         },
         {
@@ -510,15 +513,21 @@
           department: '機電整合組',
           description: '全面檢查培林磨損情況並鎖緊止動螺絲。',
           status: 'completed',
-          createdAt: '2026-09-14',
+          assigneeId: '10114-012',
+          assigneeName: '陳大明',
+          claimedAt: '2026-09-14 09:00',
           completedAt: '2026-09-16 18:40',
+          createdAt: '2026-09-14',
         },
         {
           id: 'task-prog-1',
           title: 'Swerve 陀螺儀角度漂移濾波優化',
           department: '程式控制組',
           description: '整合 Pigeon 2.0 卡爾曼濾波與視覺補償，提升 15 秒自主移動精確度。',
-          status: 'todo',
+          status: 'in_progress',
+          assigneeId: '10114-002',
+          assigneeName: '林恩萱',
+          claimedAt: '2026-09-17 14:00',
           createdAt: '2026-09-16',
         },
         {
@@ -526,7 +535,10 @@
           title: 'Driver Station 控制手把按鍵設定與震動反饋',
           department: '程式控制組',
           description: '實作操作手進球觸發時之 Xbox 手把震動提示機制。',
-          status: 'todo',
+          status: 'unclaimed',
+          assigneeId: '',
+          assigneeName: '',
+          claimedAt: '',
           createdAt: '2026-09-17',
         },
         {
@@ -534,7 +546,10 @@
           title: '錦和高中 115 學年度家長說明會宣傳摺頁定稿',
           department: '行銷管理組',
           description: '排版完成並送交學務處與印刷廠核稿。',
-          status: 'todo',
+          status: 'unclaimed',
+          assigneeId: '',
+          assigneeName: '',
+          claimedAt: '',
           createdAt: '2026-09-15',
         },
         {
@@ -543,8 +558,11 @@
           department: '行銷管理組',
           description: '包含機構切削鏡頭、程式碼特寫與隊員訪談。',
           status: 'completed',
-          createdAt: '2026-09-13',
+          assigneeId: '10114-018',
+          assigneeName: '廖子涵',
+          claimedAt: '2026-09-13 11:00',
           completedAt: '2026-09-15 15:00',
+          createdAt: '2026-09-13',
         },
       ];
 
@@ -1547,23 +1565,31 @@
           }
         };
 
-        // 工作任務清單 (pendingTasks) - Add, Delete, Toggle
+        // 工作任務清單 (pendingTasks) - Add, Delete, Toggle, Claim, Release, Unassign, Reassign
         const handleAddPendingTask = (newTask) => {
           const now = new Date();
           const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const timeStr = `${dateStr} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          const hasAssignee = !!newTask.assigneeId;
+          const assignedMember = hasAssignee ? members.find(m => m.id === newTask.assigneeId) : null;
+
           const task = {
             id: `task-${Date.now()}`,
             title: newTask.title.trim(),
             department: newTask.department,
             description: newTask.description?.trim() || '',
-            status: 'todo',
+            status: hasAssignee ? 'in_progress' : 'unclaimed',
+            assigneeId: assignedMember ? assignedMember.id : (newTask.assigneeId || ''),
+            assigneeName: assignedMember ? assignedMember.name : (newTask.assigneeName || ''),
+            claimedAt: hasAssignee ? timeStr : '',
+            completedAt: '',
             createdAt: dateStr,
           };
           const next = [task, ...pendingTasks];
           setPendingTasks(next);
           try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
           syncToCloud({ pendingTasks: next });
-          showToast('工作任務已建立', `已新增任務「${task.title}」至 ${task.department}`, 'success');
+          showToast('工作任務已建立', `已新增任務「${task.title}」至 ${task.department}${assignedMember ? `（指派給 ${assignedMember.name}）` : '（開放組別認領）'}`, 'success');
         };
 
         const handleDeletePendingTask = (taskId, title) => {
@@ -1577,18 +1603,126 @@
         };
 
         const handleTogglePendingTask = (taskId, currentStatus, title) => {
-          const nextStatus = currentStatus === 'todo' ? 'completed' : 'todo';
+          const isCurrentlyDone = currentStatus === 'completed';
           const now = new Date();
           const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-          const next = pendingTasks.map(t => t.id === taskId ? { ...t, status: nextStatus, completedAt: nextStatus === 'completed' ? timeStr : undefined } : t);
+
+          const next = pendingTasks.map(t => {
+            if (t.id !== taskId) return t;
+            if (isCurrentlyDone) {
+              return {
+                ...t,
+                status: t.assigneeId ? 'in_progress' : 'unclaimed',
+                completedAt: '',
+              };
+            } else {
+              return {
+                ...t,
+                status: 'completed',
+                completedAt: timeStr,
+              };
+            }
+          });
           setPendingTasks(next);
           try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
           syncToCloud({ pendingTasks: next });
-          if (nextStatus === 'completed') {
+          if (!isCurrentlyDone) {
             showToast('任務已標示完成！', `「${title}」已移入已完成區域`, 'success');
           } else {
             showToast('任務重設為進行中', `「${title}」已回到待辦項目`, 'info');
           }
+        };
+
+        // Member claims an unclaimed task
+        const handleClaimPendingTask = (taskId, member) => {
+          const now = new Date();
+          const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          let targetTitle = '';
+
+          const next = pendingTasks.map(t => {
+            if (t.id !== taskId) return t;
+            targetTitle = t.title;
+            return {
+              ...t,
+              status: 'in_progress',
+              assigneeId: member.id,
+              assigneeName: member.name,
+              claimedAt: timeStr,
+            };
+          });
+
+          setPendingTasks(next);
+          try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ pendingTasks: next });
+          showToast('任務承接成功！', `您已承接「${targetTitle}」，任務已移入您的個人任務清單`, 'success');
+        };
+
+        // Member releases a claimed task back to pool
+        const handleReleasePendingTask = (taskId, member) => {
+          let targetTitle = '';
+          const next = pendingTasks.map(t => {
+            if (t.id !== taskId) return t;
+            targetTitle = t.title;
+            return {
+              ...t,
+              status: 'unclaimed',
+              assigneeId: '',
+              assigneeName: '',
+              claimedAt: '',
+            };
+          });
+
+          setPendingTasks(next);
+          try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ pendingTasks: next });
+          showToast('已放棄承接', `任務「${targetTitle}」已退回組別待認領池`, 'info');
+        };
+
+        // Admin clears task assignee (unassign / release)
+        const handleUnassignPendingTask = (taskId) => {
+          let targetTitle = '';
+          const next = pendingTasks.map(t => {
+            if (t.id !== taskId) return t;
+            targetTitle = t.title;
+            return {
+              ...t,
+              status: t.status === 'completed' ? 'completed' : 'unclaimed',
+              assigneeId: '',
+              assigneeName: '',
+              claimedAt: '',
+            };
+          });
+
+          setPendingTasks(next);
+          try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ pendingTasks: next });
+          showToast('已清除接單紀錄', `「${targetTitle}」已重設為待認領狀態，開放組別其他隊員承接`, 'info');
+        };
+
+        // Admin reassigns task to a specific student
+        const handleReassignPendingTask = (taskId, targetStudentId) => {
+          const targetStudent = members.find(m => m.id === targetStudentId);
+          if (!targetStudent) return;
+          const now = new Date();
+          const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          let targetTitle = '';
+
+          const next = pendingTasks.map(t => {
+            if (t.id !== taskId) return t;
+            targetTitle = t.title;
+            return {
+              ...t,
+              status: t.status === 'completed' ? 'completed' : 'in_progress',
+              assigneeId: targetStudent.id,
+              assigneeName: targetStudent.name,
+              claimedAt: timeStr,
+            };
+          });
+
+          setPendingTasks(next);
+          try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(next)); } catch (e) {}
+          syncToCloud({ pendingTasks: next });
+          showToast('任務已成功改派', `「${targetTitle}」負責人已改為 ${targetStudent.name} (${targetStudent.id})`, 'success');
         };
 
         const handleDiscardDraft = () => {
@@ -2537,6 +2671,8 @@
                   onAddPendingTask={handleAddPendingTask}
                   onDeletePendingTask={handleDeletePendingTask}
                   onTogglePendingTask={handleTogglePendingTask}
+                  onUnassignPendingTask={handleUnassignPendingTask}
+                  onReassignPendingTask={handleReassignPendingTask}
                 />
               )}
 
@@ -2671,9 +2807,10 @@
                 <MemberTasksTab
                   member={currentMember}
                   tasks={pendingTasks}
+                  members={sortedMembers}
                   onToggleTask={handleTogglePendingTask}
-                  onDeleteTask={handleDeletePendingTask}
-                  isAdmin={currentRole === 'admin'}
+                  onClaimTask={handleClaimPendingTask}
+                  onReleaseTask={handleReleasePendingTask}
                 />
               )}
 
@@ -5429,7 +5566,9 @@
         onDeleteTaskGroup,
         onAddPendingTask,
         onDeletePendingTask,
-        onTogglePendingTask
+        onTogglePendingTask,
+        onUnassignPendingTask,
+        onReassignPendingTask
       }) {
         const [activeModule, setActiveModule] = useState('stamps'); // 'stamps' | 'work'
 
@@ -5618,11 +5757,18 @@
         const [workTitle, setWorkTitle] = useState('');
         const [workDept, setWorkDept] = useState('機電整合組');
         const [workDesc, setWorkDesc] = useState('');
-        const [workFilter, setWorkFilter] = useState('all');
+        const [workAssignMode, setWorkAssignMode] = useState('unclaimed'); // 'unclaimed' | 'student'
+        const [workAssigneeId, setWorkAssigneeId] = useState('');
+        const [workFilter, setWorkFilter] = useState('all'); // 'all' | 'unclaimed' | 'in_progress' | 'completed'
         const [workDeptFilter, setWorkDeptFilter] = useState('all');
 
+        // Reassign modal state
+        const [reassignModalTask, setReassignModalTask] = useState(null);
+        const [selectedReassignStudentId, setSelectedReassignStudentId] = useState('');
+
         const filteredWorkTasks = pendingTasks.filter(t => {
-          if (workFilter === 'todo' && t.status !== 'todo') return false;
+          if (workFilter === 'unclaimed' && (t.status === 'completed' || t.assigneeId)) return false;
+          if (workFilter === 'in_progress' && (t.status === 'completed' || !t.assigneeId)) return false;
           if (workFilter === 'completed' && t.status !== 'completed') return false;
           if (workDeptFilter !== 'all' && t.department !== workDeptFilter) return false;
           return true;
@@ -5636,15 +5782,21 @@
               title: workTitle.trim(),
               department: workDept,
               description: workDesc.trim(),
+              assigneeId: workAssignMode === 'student' ? workAssigneeId : '',
             });
           }
           setIsAddWorkOpen(false);
           setWorkTitle('');
           setWorkDesc('');
+          setWorkAssignMode('unclaimed');
+          setWorkAssigneeId('');
         };
 
         const pendingStampCount = tasks.filter(t => t.status === 'pending').length;
-        const pendingWorkCount = pendingTasks.filter(t => t.status === 'todo').length;
+        const pendingWorkCount = pendingTasks.filter(t => t.status !== 'completed').length;
+        const unclaimedWorkCount = pendingTasks.filter(t => !t.assigneeId && t.status !== 'completed').length;
+        const inProgressWorkCount = pendingTasks.filter(t => !!t.assigneeId && t.status !== 'completed').length;
+        const completedWorkCount = pendingTasks.filter(t => t.status === 'completed').length;
 
         return (
           <div className="space-y-6">
@@ -6069,28 +6221,37 @@
                       type="button"
                       onClick={() => setWorkFilter('all')}
                       className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                        workFilter === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'
+                        workFilter === 'all' ? 'bg-zinc-900 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
                       }`}
                     >
                       全部工作 ({pendingTasks.length})
                     </button>
                     <button
                       type="button"
-                      onClick={() => setWorkFilter('todo')}
+                      onClick={() => setWorkFilter('unclaimed')}
                       className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                        workFilter === 'todo' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                        workFilter === 'unclaimed' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
                       }`}
                     >
-                      待完成 ({pendingWorkCount})
+                      待認領 ({unclaimedWorkCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWorkFilter('in_progress')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        workFilter === 'in_progress' ? 'bg-blue-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                      }`}
+                    >
+                      執行中 ({inProgressWorkCount})
                     </button>
                     <button
                       type="button"
                       onClick={() => setWorkFilter('completed')}
                       className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                        workFilter === 'completed' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
+                        workFilter === 'completed' ? 'bg-emerald-700 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-100'
                       }`}
                     >
-                      已完成 ({pendingTasks.filter(t => t.status === 'completed').length})
+                      已完成 ({completedWorkCount})
                     </button>
 
                     <span className="text-zinc-300">|</span>
@@ -6110,7 +6271,11 @@
 
                   <button
                     type="button"
-                    onClick={() => setIsAddWorkOpen(true)}
+                    onClick={() => {
+                      setIsAddWorkOpen(true);
+                      setWorkAssignMode('unclaimed');
+                      setWorkAssigneeId('');
+                    }}
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors self-start sm:self-auto"
                   >
                     <Icon name="plus" className="w-4 h-4" />
@@ -6127,25 +6292,41 @@
                   <div className="space-y-3">
                     {filteredWorkTasks.map(t => {
                       const isDone = t.status === 'completed';
+                      const isClaimed = !isDone && !!t.assigneeId;
+                      const isUnclaimed = !isDone && !t.assigneeId;
+
                       return (
                         <div
                           key={t.id}
-                          className={`bg-white border rounded-xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
-                            isDone ? 'border-zinc-200 opacity-80' : 'border-zinc-200 hover:border-orange-300'
+                          className={`bg-white border rounded-xl p-5 shadow-xs flex flex-col justify-between gap-4 transition-all ${
+                            isDone
+                              ? 'border-zinc-200 opacity-80'
+                              : isClaimed
+                              ? 'border-blue-200 bg-blue-50/10 hover:border-blue-300'
+                              : 'border-zinc-200 hover:border-orange-300'
                           }`}
                         >
-                          <div className="space-y-1.5 flex-1">
-                            <div className="flex items-center gap-2">
+                          <div className="space-y-2.5">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="px-2.5 py-0.5 bg-zinc-100 text-zinc-700 rounded text-[10px] font-bold border border-zinc-200">
                                 {t.department}
                               </span>
-                              {isDone ? (
-                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                  ✓ 已完成
+                              {isDone && (
+                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                                  <Icon name="check" className="w-3 h-3" />
+                                  <span>✓ 已完成</span>
                                 </span>
-                              ) : (
-                                <span className="text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-200">
-                                  進行中
+                              )}
+                              {isClaimed && (
+                                <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 flex items-center gap-1">
+                                  <Icon name="user" className="w-3 h-3" />
+                                  <span>執行中 (已接單)</span>
+                                </span>
+                              )}
+                              {isUnclaimed && (
+                                <span className="text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-200 flex items-center gap-1">
+                                  <Icon name="sparkles" className="w-3 h-3" />
+                                  <span>待組員認領</span>
                                 </span>
                               )}
                               {t.createdAt && (
@@ -6154,10 +6335,40 @@
                                 </span>
                               )}
                             </div>
+
                             <h4 className={`text-base font-extrabold ${isDone ? 'line-through text-zinc-400' : 'text-zinc-900'}`}>
                               {t.title}
                             </h4>
-                            {t.description && <p className="text-xs text-zinc-500">{t.description}</p>}
+                            {t.description && <p className="text-xs text-zinc-500 leading-relaxed">{t.description}</p>}
+
+                            {/* Assignee Information Box */}
+                            {t.assigneeName ? (
+                              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-zinc-50 border border-zinc-200 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded-full bg-zinc-900 text-white flex items-center justify-center font-bold text-[10px]">
+                                    {t.assigneeName.slice(0, 1)}
+                                  </div>
+                                  <div>
+                                    <span className="text-zinc-500 font-medium">目前負責人：</span>
+                                    <strong className="text-zinc-900 font-black">{t.assigneeName}</strong>
+                                    <span className="text-zinc-400 font-mono ml-1">({t.assigneeId})</span>
+                                  </div>
+                                </div>
+                                {t.claimedAt && (
+                                  <span className="text-[11px] text-zinc-400 font-mono">
+                                    承接時間：{t.claimedAt}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between p-2.5 rounded-lg bg-amber-50/50 border border-dashed border-amber-200 text-xs text-amber-800">
+                                <div className="flex items-center gap-1.5">
+                                  <Icon name="sparkles" className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>待認領中（全組隊員皆可在個人頁面自由承接此工作）</span>
+                                </div>
+                              </div>
+                            )}
+
                             {isDone && t.completedAt && (
                               <p className="text-[10px] text-zinc-400 font-mono">
                                 完成時間：{t.completedAt}
@@ -6165,30 +6376,63 @@
                             )}
                           </div>
 
-                          <div className="flex items-center gap-2 self-end sm:self-center">
-                            {/* Toggle completed button */}
-                            <button
-                              type="button"
-                              onClick={() => onTogglePendingTask && onTogglePendingTask(t.id, t.status, t.title)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                                isDone
-                                  ? 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border border-zinc-200'
-                                  : 'bg-zinc-900 text-white hover:bg-zinc-800'
-                              }`}
-                            >
-                              {isDone ? '標記為未完成' : '點擊標示完成'}
-                            </button>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-zinc-100">
+                            {/* Management Actions: Reassign & Unassign */}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReassignModalTask(t);
+                                  setSelectedReassignStudentId(t.assigneeId || (studentMembers[0]?.id || ''));
+                                }}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-zinc-200 hover:border-orange-300 text-zinc-700 hover:text-orange-600 hover:bg-orange-50/50 transition-colors"
+                                title="修改或指定此任務負責人"
+                              >
+                                <Icon name="user" className="w-3.5 h-3.5" />
+                                <span>{t.assigneeId ? '改派負責人' : '指定負責人'}</span>
+                              </button>
 
-                            {/* Delete Work Task Button (Admin Capability) */}
-                            <button
-                              type="button"
-                              onClick={() => onDeletePendingTask && onDeletePendingTask(t.id, t.title)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg font-semibold border border-red-200 transition-colors"
-                              title="刪除此工作任務"
-                            >
-                              <Icon name="trash" className="w-3.5 h-3.5" />
-                              <span>刪除任務</span>
-                            </button>
+                              {t.assigneeId && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (window.confirm(`確定要清除負責人「${t.assigneeName}」的接單紀錄，將「${t.title}」釋出回組別待認領池嗎？`)) {
+                                      if (onUnassignPendingTask) onUnassignPendingTask(t.id);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-zinc-200 hover:border-amber-300 text-zinc-600 hover:text-amber-700 hover:bg-amber-50/50 transition-colors"
+                                  title="清除接單紀錄，重新釋出回待認領池"
+                                >
+                                  <Icon name="revert" className="w-3.5 h-3.5" />
+                                  <span>清除接單</span>
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Status and Delete Actions */}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => onTogglePendingTask && onTogglePendingTask(t.id, t.status, t.title)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                  isDone
+                                    ? 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border border-zinc-200'
+                                    : 'bg-zinc-900 text-white hover:bg-zinc-800'
+                                }`}
+                              >
+                                {isDone ? '標記為未完成' : '標示為已完成'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => onDeletePendingTask && onDeletePendingTask(t.id, t.title)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg font-semibold border border-red-200 transition-colors"
+                                title="刪除此工作任務"
+                              >
+                                <Icon name="trash" className="w-3.5 h-3.5" />
+                                <span>刪除任務</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -6353,7 +6597,7 @@
                   <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
                     <div>
                       <h3 className="text-base font-bold text-zinc-900">新增組別工作任務</h3>
-                      <p className="text-xs text-zinc-500">發布任務至組別清單，全員可隨時協同標記完成</p>
+                      <p className="text-xs text-zinc-500">發布任務至組別，隊員可自主承接或由管理員直接指定</p>
                     </div>
                     <button
                       type="button"
@@ -6369,7 +6613,13 @@
                       <label className="block text-xs font-bold text-zinc-700 mb-1">所屬組別 *</label>
                       <select
                         value={workDept}
-                        onChange={(e) => setWorkDept(e.target.value)}
+                        onChange={(e) => {
+                          setWorkDept(e.target.value);
+                          if (workAssignMode === 'student') {
+                            const match = studentMembers.find(m => (m.departments || []).includes(e.target.value));
+                            if (match) setWorkAssigneeId(match.id);
+                          }
+                        }}
                         className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       >
                         <option value="機電整合組">機電整合組</option>
@@ -6377,6 +6627,68 @@
                         <option value="行銷管理組">行銷管理組</option>
                       </select>
                     </div>
+
+                    {/* Assignee Mode Choice */}
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1.5">任務指派方式 *</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setWorkAssignMode('unclaimed')}
+                          className={`p-2.5 rounded-xl border text-left font-bold text-xs transition-all ${
+                            workAssignMode === 'unclaimed'
+                              ? 'bg-orange-50 border-orange-500 text-orange-950 shadow-2xs'
+                              : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <Icon name="sparkles" className="w-3.5 h-3.5 text-orange-600" />
+                            <span>1. 開放自由認領</span>
+                          </div>
+                          <div className="text-[10px] font-normal text-zinc-500 mt-1">發布至組別，隊員自由接單</div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setWorkAssignMode('student');
+                            if (!workAssigneeId && studentMembers.length > 0) {
+                              const match = studentMembers.find(m => (m.departments || []).includes(workDept));
+                              setWorkAssigneeId(match ? match.id : studentMembers[0].id);
+                            }
+                          }}
+                          className={`p-2.5 rounded-xl border text-left font-bold text-xs transition-all ${
+                            workAssignMode === 'student'
+                              ? 'bg-orange-50 border-orange-500 text-orange-950 shadow-2xs'
+                              : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <Icon name="user" className="w-3.5 h-3.5 text-orange-600" />
+                            <span>2. 直接指定隊員</span>
+                          </div>
+                          <div className="text-[10px] font-normal text-zinc-500 mt-1">直接指定某隊員為負責人</div>
+                        </button>
+                      </div>
+                    </div>
+
+                    {workAssignMode === 'student' && (
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">指定負責隊員 *</label>
+                        <select
+                          value={workAssigneeId}
+                          onChange={(e) => setWorkAssigneeId(e.target.value)}
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        >
+                          {studentMembers.map(m => (
+                            <option key={m.id} value={m.id}>
+                              {m.id} - {m.name} ({(m.departments || []).join('/') || '未分組'})
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[11px] text-zinc-500 mt-1">指派後任務將直接移入該隊員之「我的任務」清單。</p>
+                      </div>
+                    )}
 
                     <div>
                       <label className="block text-xs font-bold text-zinc-700 mb-1">任務工作名稱 *</label>
@@ -6641,6 +6953,105 @@
                       >
                         <Icon name="plus" className="w-3.5 h-3.5" />
                         <span>確認新增入冊 ({selectedEnrollIds.length} 人)</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal 4: 改派 / 指定任務負責人 */}
+            {reassignModalTask && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+                <div className="bg-white border border-zinc-200 w-full max-w-md rounded-2xl shadow-2xl p-6 overflow-hidden space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
+                    <div>
+                      <h3 className="text-base font-bold text-zinc-900">改派 / 指定任務負責人</h3>
+                      <p className="text-xs text-zinc-500">管理員可直接指派指定隊員接單，或清除接單釋出任務</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReassignModalTask(null)}
+                      className="p-1 rounded-lg text-zinc-400 hover:bg-zinc-100"
+                    >
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 text-xs space-y-1.5">
+                    <div className="text-zinc-500">
+                      任務名稱：<strong className="text-zinc-900">{reassignModalTask.title}</strong>
+                    </div>
+                    <div className="text-zinc-500">
+                      所屬組別：<span className="font-semibold text-zinc-700">{reassignModalTask.department}</span>
+                    </div>
+                    <div className="text-zinc-500">
+                      目前狀態：
+                      {reassignModalTask.assigneeName ? (
+                        <span className="font-bold text-blue-700 ml-1">
+                          由 {reassignModalTask.assigneeName} ({reassignModalTask.assigneeId}) 承接中
+                        </span>
+                      ) : (
+                        <span className="font-bold text-amber-700 ml-1">待認領 (尚未有隊員接單)</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-zinc-700">選擇欲改派或指定的隊員 *</label>
+                    <select
+                      value={selectedReassignStudentId}
+                      onChange={(e) => setSelectedReassignStudentId(e.target.value)}
+                      className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                    >
+                      {studentMembers.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.id} - {m.name} ({(m.departments || []).join('/') || '未分組'})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-zinc-400">指派後任務將立即轉入該隊員之個人任務清單中。</p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-3 border-t border-zinc-100">
+                    <div>
+                      {reassignModalTask.assigneeId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`確定要清除隊員「${reassignModalTask.assigneeName}」的接單紀錄，將此任務釋出回待認領池嗎？`)) {
+                              if (onUnassignPendingTask) onUnassignPendingTask(reassignModalTask.id);
+                              setReassignModalTask(null);
+                            }
+                          }}
+                          className="px-3 py-2 border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+                          title="清除負責人接單資料"
+                        >
+                          <Icon name="revert" className="w-3.5 h-3.5" />
+                          <span>清除接單 (釋出)</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setReassignModalTask(null)}
+                        className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-semibold hover:bg-zinc-50"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedReassignStudentId && onReassignPendingTask) {
+                            onReassignPendingTask(reassignModalTask.id, selectedReassignStudentId);
+                          }
+                          setReassignModalTask(null);
+                        }}
+                        className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs"
+                      >
+                        確認改派
                       </button>
                     </div>
                   </div>
@@ -8286,11 +8697,36 @@
         );
       }
 
-      function MemberTasksTab({ member, tasks, onToggleTask }) {
-        const [tab, setTab] = useState('todo');
+      function MemberTasksTab({
+        member,
+        tasks = [],
+        members = [],
+        onToggleTask,
+        onClaimTask,
+        onReleaseTask
+      }) {
+        const [tab, setTab] = useState('mine'); // 'mine' | 'unclaimed' | 'all' | 'completed'
 
-        const myTasks = tasks.filter(t => member.departments.includes(t.department));
-        const filtered = myTasks.filter(t => tab === 'all' ? true : t.status === tab);
+        const memberDepts = member.departments || [];
+        const deptTasks = useMemo(() => {
+          return tasks.filter(t => memberDepts.includes(t.department));
+        }, [tasks, memberDepts]);
+
+        const myClaimedTasks = deptTasks.filter(t => t.assigneeId === member.id && t.status !== 'completed');
+        const unclaimedTasks = deptTasks.filter(t => !t.assigneeId && t.status !== 'completed');
+        const completedTasks = deptTasks.filter(t => t.status === 'completed');
+
+        let displayedTasks = [];
+        if (tab === 'mine') {
+          displayedTasks = myClaimedTasks;
+        } else if (tab === 'unclaimed') {
+          displayedTasks = unclaimedTasks;
+        } else if (tab === 'completed') {
+          displayedTasks = completedTasks;
+        } else {
+          // 'all'
+          displayedTasks = deptTasks;
+        }
 
         return (
           <div className="space-y-6">
@@ -8298,75 +8734,251 @@
               <div>
                 <div className="flex items-center gap-1.5 text-xs font-bold text-orange-600 uppercase mb-1">
                   <Icon name="checkSquare" className="w-3.5 h-3.5" />
-                  <span>Department Tasks</span>
+                  <span>Department & Personal Tasks</span>
                 </div>
-                <h2 className="text-xl font-black text-zinc-900">組別待完成工作清單</h2>
+                <h2 className="text-xl font-black text-zinc-900">組別工作任務與個人承接</h2>
                 <p className="text-xs text-zinc-500 mt-1">
-                  顯示所屬「{member.departments.join('、')}」尚未完成之工作內容，同組隊員共同檢視與完成。
+                  所屬組別：<span className="font-bold text-zinc-800">{memberDepts.join('、') || '尚未設定'}</span>。組內工作開放全體組員自主認領承接，承接後進入個人清單，其他人無法重複接單。
                 </p>
               </div>
 
-              <div className="flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200 self-start md:self-auto text-xs">
+              {/* Subtabs */}
+              <div className="flex flex-wrap items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200 self-start md:self-auto text-xs gap-1">
                 <button
-                  onClick={() => setTab('todo')}
-                  className={`px-3 py-1.5 rounded-lg font-bold ${tab === 'todo' ? 'bg-orange-600 text-white' : 'text-zinc-600'}`}
+                  type="button"
+                  onClick={() => setTab('mine')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                    tab === 'mine' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-200/60'
+                  }`}
                 >
-                  待完成 ({myTasks.filter(t => t.status === 'todo').length})
+                  <Icon name="user" className="w-3.5 h-3.5" />
+                  <span>我的任務 ({myClaimedTasks.length})</span>
                 </button>
                 <button
-                  onClick={() => setTab('completed')}
-                  className={`px-3 py-1.5 rounded-lg font-bold ${tab === 'completed' ? 'bg-zinc-900 text-white' : 'text-zinc-600'}`}
+                  type="button"
+                  onClick={() => setTab('unclaimed')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                    tab === 'unclaimed' ? 'bg-orange-600 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-200/60'
+                  }`}
                 >
-                  已完成 ({myTasks.filter(t => t.status === 'completed').length})
+                  <Icon name="sparkles" className="w-3.5 h-3.5" />
+                  <span>待認領 ({unclaimedTasks.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('all')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                    tab === 'all' ? 'bg-zinc-900 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-200/60'
+                  }`}
+                >
+                  <Icon name="layers" className="w-3.5 h-3.5" />
+                  <span>組別全員 ({deptTasks.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('completed')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                    tab === 'completed' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-600 hover:bg-zinc-200/60'
+                  }`}
+                >
+                  <Icon name="check" className="w-3.5 h-3.5" />
+                  <span>已完成 ({completedTasks.length})</span>
                 </button>
               </div>
             </div>
 
-            <div className="space-y-3">
-              {filtered.map(t => {
-                const isDone = t.status === 'completed';
-                return (
-                  <div
-                    key={t.id}
-                    className={`bg-white border rounded-xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-                      isDone ? 'border-zinc-200 opacity-80' : 'border-zinc-200 hover:border-orange-300'
-                    }`}
+            {/* Content Cards */}
+            {displayedTasks.length === 0 ? (
+              <div className="bg-white border border-dashed border-zinc-300 rounded-xl p-10 text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-zinc-100 flex items-center justify-center mx-auto text-zinc-400">
+                  <Icon name="checkSquare" className="w-6 h-6" />
+                </div>
+                <div className="text-zinc-700 font-bold text-sm">
+                  {tab === 'mine' && '目前您沒有正在執行的個人承接任務'}
+                  {tab === 'unclaimed' && '太棒了！目前組別沒有待認領的任務，工作皆已有人承接或已完成！'}
+                  {tab === 'completed' && '目前組別尚無已完成的任務記錄'}
+                  {tab === 'all' && '目前組別暫無指派的任務項目'}
+                </div>
+                <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                  {tab === 'mine' && '您可以點擊上方「待認領」分頁，主動承接組別指派之工作任務。'}
+                  {tab === 'unclaimed' && '當教練管理員發布新工作或有隊員釋出任務時，將會在此顯示供您認領。'}
+                  {tab === 'completed' && '隊員完成承接之任務並標記完成後，將會收錄於此。'}
+                  {tab === 'all' && '管理員發布工作任務後，所屬組別隊員即可在此共同檢視。'}
+                </p>
+                {tab === 'mine' && unclaimedTasks.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTab('unclaimed')}
+                    className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-lg shadow-xs transition-all cursor-pointer"
                   >
-                    <div className="space-y-1.5 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 bg-zinc-100 text-zinc-700 rounded text-[10px] font-bold">
-                          {t.department}
-                        </span>
-                        {isDone ? (
-                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                            已完成
+                    <Icon name="sparkles" className="w-4 h-4" />
+                    <span>前往認領任務 ({unclaimedTasks.length})</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {displayedTasks.map(t => {
+                  const isDone = t.status === 'completed';
+                  const isMyTask = t.assigneeId === member.id;
+                  const isClaimedByOther = !isDone && !!t.assigneeId && t.assigneeId !== member.id;
+                  const isUnclaimed = !isDone && !t.assigneeId;
+
+                  return (
+                    <div
+                      key={t.id}
+                      className={`bg-white border rounded-xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
+                        isDone
+                          ? 'border-zinc-200 opacity-75'
+                          : isMyTask
+                          ? 'border-orange-300 bg-orange-50/10 hover:border-orange-400'
+                          : isClaimedByOther
+                          ? 'border-zinc-200 bg-zinc-50/50'
+                          : 'border-zinc-200 hover:border-orange-300'
+                      }`}
+                    >
+                      <div className="space-y-2 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2.5 py-0.5 bg-zinc-100 text-zinc-700 rounded text-[10px] font-bold border border-zinc-200">
+                            {t.department}
                           </span>
-                        ) : (
-                          <span className="text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded">
-                            待完成
-                          </span>
+
+                          {/* Status and Assignee Badges */}
+                          {isDone && (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                              <Icon name="check" className="w-3 h-3" />
+                              <span>已完成</span>
+                            </span>
+                          )}
+
+                          {isMyTask && !isDone && (
+                            <span className="text-[10px] font-black text-orange-700 bg-orange-100/70 px-2.5 py-0.5 rounded border border-orange-300 flex items-center gap-1">
+                              <Icon name="user" className="w-3 h-3 text-orange-600" />
+                              <span>由我負責中</span>
+                            </span>
+                          )}
+
+                          {isClaimedByOther && (
+                            <span className="text-[10px] font-bold text-zinc-700 bg-zinc-100 px-2.5 py-0.5 rounded border border-zinc-200 flex items-center gap-1">
+                              <Icon name="lock" className="w-3 h-3 text-zinc-500" />
+                              <span>目前負責人：{t.assigneeName}</span>
+                            </span>
+                          )}
+
+                          {isUnclaimed && (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1">
+                              <Icon name="sparkles" className="w-3 h-3 text-amber-600" />
+                              <span>待認領 (開放接單)</span>
+                            </span>
+                          )}
+
+                          {t.createdAt && (
+                            <span className="text-[10px] text-zinc-400 font-mono">
+                              發布：{t.createdAt}
+                            </span>
+                          )}
+                        </div>
+
+                        <h4 className={`text-base font-extrabold ${isDone ? 'line-through text-zinc-400' : 'text-zinc-900'}`}>
+                          {t.title}
+                        </h4>
+
+                        {t.description && (
+                          <p className="text-xs text-zinc-500 leading-relaxed">{t.description}</p>
+                        )}
+
+                        {/* Assignee / Timing detailed bar */}
+                        <div className="text-[11px] text-zinc-500 flex flex-wrap items-center gap-x-4 gap-y-1 pt-1">
+                          {isClaimedByOther && (
+                            <span className="text-zinc-600 flex items-center gap-1 font-medium">
+                              <Icon name="user" className="w-3 h-3 text-zinc-400" />
+                              目前負責人：<strong className="text-zinc-800 font-bold">{t.assigneeName}</strong>
+                              <span className="font-mono text-zinc-400">({t.assigneeId})</span>
+                              {t.claimedAt && <span className="text-zinc-400 ml-1">· 接單於 {t.claimedAt}</span>}
+                            </span>
+                          )}
+
+                          {isMyTask && !isDone && (
+                            <span className="text-orange-700 flex items-center gap-1 font-medium">
+                              <Icon name="clock" className="w-3 h-3 text-orange-500" />
+                              您於 {t.claimedAt || '近期'} 承接此任務
+                            </span>
+                          )}
+
+                          {isDone && (
+                            <span className="text-zinc-400 font-mono flex items-center gap-1">
+                              <Icon name="check" className="w-3 h-3 text-emerald-500" />
+                              完成於：{t.completedAt || '近期'}
+                              {t.assigneeName && <span> (負責人：{t.assigneeName})</span>}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
+                        {/* If it's my task and not done */}
+                        {isMyTask && !isDone && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => onToggleTask(t.id, t.status, t.title)}
+                              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Icon name="check" className="w-3.5 h-3.5" />
+                              <span>完成任務</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`確定要放棄承接「${t.title}」嗎？放棄後任務將退回組別待認領池供其他人承接。`)) {
+                                  onReleaseTask(t.id, member);
+                                }
+                              }}
+                              className="px-2.5 py-1.5 border border-zinc-200 hover:border-red-300 text-zinc-500 hover:text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors cursor-pointer"
+                              title="放棄承接並釋出任務"
+                            >
+                              放棄承接
+                            </button>
+                          </>
+                        )}
+
+                        {/* If task is unclaimed */}
+                        {isUnclaimed && (
+                          <button
+                            type="button"
+                            onClick={() => onClaimTask(t.id, member)}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white font-bold text-xs rounded-lg shadow-xs transition-all cursor-pointer"
+                          >
+                            <Icon name="plus" className="w-3.5 h-3.5" />
+                            <span>⚡ 承接此任務</span>
+                          </button>
+                        )}
+
+                        {/* If task is claimed by someone else */}
+                        {isClaimedByOther && (
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-100 text-zinc-400 border border-zinc-200 select-none cursor-not-allowed" title="此任務已被其他隊員承接，無法重複接單">
+                            <Icon name="lock" className="w-3.5 h-3.5 text-zinc-400" />
+                            <span>已由 {t.assigneeName} 承接 (無法接單)</span>
+                          </div>
+                        )}
+
+                        {/* If task is completed */}
+                        {isDone && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleTask(t.id, t.status, t.title)}
+                            className="px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-lg text-xs font-medium border border-zinc-200 transition-colors cursor-pointer"
+                          >
+                            重新標記未完成
+                          </button>
                         )}
                       </div>
-                      <h4 className={`text-base font-extrabold ${isDone ? 'line-through text-zinc-400' : 'text-zinc-900'}`}>
-                        {t.title}
-                      </h4>
-                      {t.description && <p className="text-xs text-zinc-500">{t.description}</p>}
                     </div>
-
-                    <div>
-                      <button
-                        onClick={() => onToggleTask(t.id, t.status, t.title)}
-                        className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold ${
-                          isDone ? 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200' : 'bg-zinc-900 text-white hover:bg-zinc-800'
-                        }`}
-                      >
-                        {isDone ? '標記為未完成' : '點擊標示完成'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       }
