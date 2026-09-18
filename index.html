@@ -266,9 +266,9 @@
             category: 'MARC Mini 機器人',
             name: `MARC Mini 機器人 ${pad}號`,
             status: isBorrowed ? 'borrowed' : 'available',
-            borrowedBy: i === 0 ? '林恩萱 (10114-002)' : i === 4 ? '陳大明 (10114-012)' : undefined,
-            borrowedAt: isBorrowed ? '2026-09-16 17:30' : undefined,
-            notes: isBorrowed ? '微型輪型自主移動測試' : undefined,
+            borrowedBy: i === 0 ? '林恩萱 (10114-002)' : i === 4 ? '陳大明 (10114-012)' : '',
+            borrowedAt: isBorrowed ? '2026-09-16 17:30' : '',
+            notes: isBorrowed ? '微型輪型自主移動測試' : '',
           };
         }),
         ...Array.from({ length: 40 }, (_, i) => {
@@ -280,9 +280,9 @@
             category: 'MARC R4 機器人',
             name: `MARC R4 機器人 ${pad}號`,
             status: isBorrowed ? 'borrowed' : 'available',
-            borrowedBy: i === 0 ? '王小明 (10114-008)' : i === 7 ? '陳大明 (10114-012)' : i === 14 ? '林恩萱 (10114-002)' : undefined,
-            borrowedAt: isBorrowed ? '2026-09-16 18:00' : undefined,
-            notes: isBorrowed ? '四輪全向底盤控制調諧' : undefined,
+            borrowedBy: i === 0 ? '王小明 (10114-008)' : i === 7 ? '陳大明 (10114-012)' : i === 14 ? '林恩萱 (10114-002)' : '',
+            borrowedAt: isBorrowed ? '2026-09-16 18:00' : '',
+            notes: isBorrowed ? '四輪全向底盤控制調諧' : '',
           };
         }),
         ...Array.from({ length: 40 }, (_, i) => {
@@ -294,9 +294,9 @@
             category: 'MARC 搖桿+接收器',
             name: `MARC 遙控手把組 ${pad}號`,
             status: isBorrowed ? 'borrowed' : 'available',
-            borrowedBy: i === 0 ? '林恩萱 (10114-002)' : i === 1 ? '王小明 (10114-008)' : undefined,
-            borrowedAt: isBorrowed ? '2026-09-16 19:00' : undefined,
-            notes: isBorrowed ? '操作手手感配對' : undefined,
+            borrowedBy: i === 0 ? '林恩萱 (10114-002)' : i === 1 ? '王小明 (10114-008)' : '',
+            borrowedAt: isBorrowed ? '2026-09-16 19:00' : '',
+            notes: isBorrowed ? '操作手手感配對' : '',
           };
         }),
         ...Array.from({ length: 20 }, (_, i) => {
@@ -308,9 +308,9 @@
             category: 'START 智慧小車',
             name: `START 智慧小車 ${pad}號`,
             status: isBorrowed ? 'borrowed' : 'available',
-            borrowedBy: i === 2 ? '張詠晴 (10114-015)' : undefined,
-            borrowedAt: isBorrowed ? '2026-09-17 08:30' : undefined,
-            notes: isBorrowed ? '超音波避障教學實作' : undefined,
+            borrowedBy: i === 2 ? '張詠晴 (10114-015)' : '',
+            borrowedAt: isBorrowed ? '2026-09-17 08:30' : '',
+            notes: isBorrowed ? '超音波避障教學實作' : '',
           };
         }),
         ...Array.from({ length: 20 }, (_, i) => {
@@ -322,9 +322,9 @@
             category: '天穹無人機',
             name: `天穹無人機 ${pad}號`,
             status: isBorrowed ? 'borrowed' : 'available',
-            borrowedBy: i === 0 ? '廖子涵 (10114-018)' : undefined,
-            borrowedAt: isBorrowed ? '2026-09-16 16:00' : undefined,
-            notes: isBorrowed ? '室內光流定點飛行除錯' : undefined,
+            borrowedBy: i === 0 ? '廖子涵 (10114-018)' : '',
+            borrowedAt: isBorrowed ? '2026-09-16 16:00' : '',
+            notes: isBorrowed ? '室內光流定點飛行除錯' : '',
           };
         }),
       ];
@@ -896,11 +896,17 @@
         if (!config || !config.apiKey || !config.projectId) return null;
         try {
           if (window.firebase) {
+            let db;
             if (firebase.apps && firebase.apps.length > 0) {
-              return firebase.firestore();
+              db = firebase.firestore();
+            } else {
+              const app = firebase.initializeApp(config);
+              db = firebase.firestore();
             }
-            const app = firebase.initializeApp(config);
-            return firebase.firestore();
+            try {
+              db.settings({ ignoreUndefinedProperties: true });
+            } catch (e) {}
+            return db;
           }
         } catch (e) {
           console.warn('Firebase init warning:', e);
@@ -1112,6 +1118,15 @@
               if (doc.exists) {
                 const data = doc.data();
                 if (data && data.updatedBy !== clientIdRef.current) {
+                  const localTime = parseInt(localStorage.getItem('frc10114_last_local_update') || '0', 10);
+                  const remoteTime = data.updatedAt || 0;
+                  // If local changes are strictly newer than Firestore's last saved updatedAt,
+                  // push local changes up rather than letting stale Firestore snapshot stomp on them
+                  if (localTime > remoteTime && (localTime - remoteTime) > 1500) {
+                    syncToCloud();
+                    return;
+                  }
+
                   isRemoteUpdateRef.current = true;
                   if (data.members && Array.isArray(data.members)) {
                     setMembers(data.members);
@@ -1164,6 +1179,9 @@
 
         // Push state changes to Cloud Firestore
         const syncToCloud = async (overrideData = null) => {
+          const nowTs = Date.now();
+          try { localStorage.setItem('frc10114_last_local_update', nowTs.toString()); } catch (e) {}
+
           if (!firebaseConfig) return false;
           try {
             const db = initFirestore(firebaseConfig);
@@ -1179,11 +1197,12 @@
               reservations: machineReservations,
               eduCategories,
               eduEquipment,
-              updatedAt: Date.now(),
+              updatedAt: nowTs,
               updatedBy: clientIdRef.current,
               ...(overrideData || {}),
             };
-            await db.collection('frc10114_teams').doc('team_state').set(payload, { merge: true });
+            const cleanPayload = JSON.parse(JSON.stringify(payload));
+            await db.collection('frc10114_teams').doc('team_state').set(cleanPayload, { merge: true });
             setIsFirebaseConnected(true);
             setIsSyncingCloud(false);
             return true;
@@ -1695,7 +1714,7 @@
 
           const next = eduEquipment.map(eq =>
             eq.id === itemId
-              ? { ...eq, status: 'borrowed', borrowedBy: borrowerName, borrowedAt: timeStr, notes }
+              ? { ...eq, status: 'borrowed', borrowedBy: borrowerName, borrowedAt: timeStr, notes: notes || '' }
               : eq
           );
           setEduEquipment(next);
@@ -1705,11 +1724,11 @@
         };
 
         const handleReturnEduEquipment = (itemId, itemName) => {
-          const next = eduEquipment.map(eq =>
-            eq.id === itemId
-              ? { ...eq, status: 'available', borrowedBy: undefined, borrowedAt: undefined, notes: undefined }
-              : eq
-          );
+          const next = eduEquipment.map(eq => {
+            if (eq.id !== itemId) return eq;
+            const updated = { ...eq, status: 'available', borrowedBy: '', borrowedAt: '', notes: '' };
+            return updated;
+          });
           setEduEquipment(next);
           try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
           syncToCloud({ eduEquipment: next });
@@ -1814,7 +1833,16 @@
         };
 
         const handleUpdateEduItem = (itemId, updatedFields) => {
-          const next = eduEquipment.map(e => e.id === itemId ? { ...e, ...updatedFields } : e);
+          const sanitized = { ...updatedFields };
+          if (sanitized.status === 'available') {
+            sanitized.borrowedBy = '';
+            sanitized.borrowedAt = '';
+          }
+          if (sanitized.notes === undefined) sanitized.notes = '';
+          if (sanitized.borrowedBy === undefined) sanitized.borrowedBy = '';
+          if (sanitized.borrowedAt === undefined) sanitized.borrowedAt = '';
+
+          const next = eduEquipment.map(e => e.id === itemId ? { ...e, ...sanitized } : e);
           setEduEquipment(next);
           try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
           syncToCloud({ eduEquipment: next });
@@ -3665,30 +3693,28 @@
                           )}
                         </div>
 
-                        {/* Admin Borrow / Return Actions */}
-                        {isAdmin && (
-                          <div className="mt-3 pt-2 border-t border-zinc-100 flex justify-end">
-                            {isBorrowed ? (
-                              <button
-                                onClick={() => onReturnEduEquipment(item.id, item.name)}
-                                className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-white text-[11px] font-semibold rounded-md transition-colors cursor-pointer"
-                              >
-                                登記歸還
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  setBorrowModalItem(item);
-                                  setBorrowerInput(currentMember ? currentMember.name : '');
-                                  setBorrowNotes('');
-                                }}
-                                className="px-2.5 py-1 bg-orange-600 hover:bg-orange-700 text-white text-[11px] font-semibold rounded-md transition-colors cursor-pointer"
-                              >
-                                借出登記
-                              </button>
-                            )}
-                          </div>
-                        )}
+                        {/* Equipment Borrow / Return Actions */}
+                        <div className="mt-3 pt-2 border-t border-zinc-100 flex justify-end">
+                          {isBorrowed ? (
+                            <button
+                              onClick={() => onReturnEduEquipment(item.id, item.name)}
+                              className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-white text-[11px] font-semibold rounded-md transition-colors cursor-pointer"
+                            >
+                              登記歸還
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setBorrowModalItem(item);
+                                setBorrowerInput(currentMember ? (currentMember.id ? `${currentMember.name} (${currentMember.id})` : currentMember.name) : '');
+                                setBorrowNotes('');
+                              }}
+                              className="px-2.5 py-1 bg-orange-600 hover:bg-orange-700 text-white text-[11px] font-semibold rounded-md transition-colors cursor-pointer"
+                            >
+                              借出登記
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -4222,9 +4248,9 @@
                                   number: editItemNumber.trim(),
                                   name: editItemName.trim(),
                                   status: editItemStatus,
-                                  notes: editItemNotes.trim() || undefined,
-                                  borrowedBy: editItemStatus === 'borrowed' ? editItemBorrower.trim() : undefined,
-                                  borrowedAt: editItemStatus === 'borrowed' ? (editItemModalItem.borrowedAt || '2026-09-17 12:00') : undefined,
+                                  notes: editItemNotes.trim(),
+                                  borrowedBy: editItemStatus === 'borrowed' ? editItemBorrower.trim() : '',
+                                  borrowedAt: editItemStatus === 'borrowed' ? (editItemModalItem.borrowedAt || getTodayDateStr()) : '',
                                 });
                                 setEditItemModalItem(null);
                               }}
