@@ -1037,9 +1037,9 @@
             const r = sessionStorage.getItem('frc10114_role');
             if (r === 'member') return 'profile';
             if (r === 'parent') return 'portal';
-            if (r === 'admin') return 'members';
+            if (r === 'admin') return 'profile';
           } catch (e) {}
-          return 'members';
+          return 'profile';
         });
 
         // Firebase Cloud Sync State
@@ -1383,7 +1383,7 @@
           if (role === 'admin') {
             const admin = memberObj || members.find(m => m.id === '10114-001') || members[0];
             setCurrentMember(admin);
-            setActiveTab('members');
+            setActiveTab('profile');
             try { sessionStorage.setItem('frc10114_member_id', admin.id); } catch (e) {}
             showToast('歡迎管理員教練', '已進入 FRC 10114 管理後台', 'success');
           } else if (role === 'member') {
@@ -1972,12 +1972,12 @@
               <div className="border-t border-zinc-100 bg-zinc-50/70 overflow-x-auto scrollbar-none">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-1 py-1.5">
                   {currentRole === 'admin' && [
+                    { id: 'profile', label: '管理員設定', icon: 'shieldCheck' },
                     { id: 'members', label: '隊員管理', icon: 'user' },
                     { id: 'calendar', label: '隊伍行事曆', icon: 'calendar' },
                     { id: 'tasks', label: '任務審核', icon: 'checkSquare' },
                     { id: 'equipment', label: '機具設備排程與清單', icon: 'wrench' },
                     { id: 'attendance', label: '到校/請假週表', icon: 'clock' },
-                    { id: 'profile', label: '教練設定', icon: 'shieldCheck' },
                   ].map(tab => (
                     <button
                       key={tab.id}
@@ -2741,12 +2741,12 @@
             {/* --- MOBILE FIXED BOTTOM NAVIGATION BAR --- */}
             <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-zinc-200 px-2 py-1 flex items-center justify-around shadow-lg">
               {currentRole === 'admin' && [
+                { id: 'profile', label: '管理設定', icon: 'shieldCheck' },
                 { id: 'members', label: '名冊', icon: 'user' },
                 { id: 'calendar', label: '行事曆', icon: 'calendar' },
                 { id: 'tasks', label: '審核', icon: 'checkSquare' },
                 { id: 'equipment', label: '設備排程', icon: 'wrench' },
                 { id: 'attendance', label: '考勤', icon: 'clock' },
-                { id: 'profile', label: '教練設定', icon: 'shieldCheck' },
               ].map(tab => (
                 <button
                   key={tab.id}
