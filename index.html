@@ -850,6 +850,14 @@
         URL.revokeObjectURL(a);
       }
 
+      function getTodayDateStr() {
+        const d = new Date();
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+      }
+
       // --- FIREBASE CLOUD DATABASE ENGINE (Dual Mode with LocalStorage Fallback) ---
       const DEFAULT_FIREBASE_CONFIG = {
         apiKey: "AIzaSyC0EWuQAyT_tMGleHe8UjdLmgiBC1D5Vdw",
@@ -4316,7 +4324,7 @@
         }
 
         // Current month days
-        const todayStr = '2026-09-17';
+        const todayStr = getTodayDateStr();
         for (let d = 1; d <= daysInCurrentMonth; d++) {
           const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
           gridDays.push({
@@ -4686,14 +4694,15 @@
         const [editingEvent, setEditingEvent] = useState(null);
         const [deptFilter, setDeptFilter] = useState('all');
         const [typeFilter, setTypeFilter] = useState('all');
+        const [showPast, setShowPast] = useState(false);
 
         const [name, setName] = useState('');
         const [type, setType] = useState('機電整合組培訓');
-        const [date, setDate] = useState('2026-09-22');
+        const [date, setDate] = useState(getTodayDateStr());
         const [startTime, setStartTime] = useState('18:00');
-        const [endTime, setEndTime] = useState('20:30');
+        const [endTime, setEndTime] = useState('21:00');
         const [depts, setDepts] = useState(['機電整合組']);
-        const [location, setLocation] = useState('機器人實作工坊 (科學樓 B1)');
+        const [location, setLocation] = useState('科技中心');
         const [description, setDescription] = useState('');
 
         const types = [
@@ -4711,11 +4720,11 @@
           setName('');
           setType('機電整合組培訓');
           if (prefilledDate) setDate(prefilledDate);
-          else setDate('2026-09-22');
+          else setDate(getTodayDateStr());
           setStartTime('18:00');
-          setEndTime('20:30');
+          setEndTime('21:00');
           setDepts(['機電整合組']);
-          setLocation('機器人實作工坊 (科學樓 B1)');
+          setLocation('科技中心');
           setDescription('');
           setIsAddOpen(true);
         };
@@ -4724,20 +4733,26 @@
           setEditingEvent(ev);
           setName(ev.name || '');
           setType(ev.type || '機電整合組培訓');
-          setDate(ev.date || '2026-09-22');
+          setDate(ev.date || getTodayDateStr());
           setStartTime(ev.startTime || '18:00');
-          setEndTime(ev.endTime || '20:30');
+          setEndTime(ev.endTime || '21:00');
           setDepts(ev.departments && ev.departments.length > 0 ? ev.departments : ['機電整合組']);
-          setLocation(ev.location || '');
+          setLocation(ev.location || '科技中心');
           setDescription(ev.description || '');
           setIsAddOpen(true);
         };
+
+        const todayStr = getTodayDateStr();
 
         const filtered = events.filter(e => {
           if (deptFilter !== 'all' && !e.departments.includes(deptFilter)) return false;
           if (typeFilter !== 'all' && e.type !== typeFilter) return false;
           return true;
         });
+
+        const upcomingEvents = filtered.filter(e => e.date >= todayStr);
+        const pastEvents = filtered.filter(e => e.date < todayStr);
+        const displayedEvents = showPast ? filtered : upcomingEvents;
 
         const handleSubmit = (e) => {
           e.preventDefault();
@@ -4864,71 +4879,106 @@
 
                 {/* Cards List */}
                 <div className="space-y-3">
-                  {filtered.map((ev, index) => (
-                    <div
-                      key={ev.id}
-                      className="bg-white border border-zinc-200 hover:border-orange-300 rounded-xl p-5 shadow-xs transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden"
-                    >
-                      {index === 0 && (
-                        <div className="absolute top-0 left-0 bg-orange-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-br-lg tracking-wider">
-                          NEXT UP • 最靠近活動
-                        </div>
-                      )}
+                  {displayedEvents.map((ev, index) => {
+                    const isUpcomingTop = index === 0 && ev.date >= todayStr;
+                    const isPast = ev.date < todayStr;
 
-                      <div className="space-y-2 flex-1 pt-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
-                            {ev.type}
-                          </span>
-                          {ev.departments.map(d => (
-                            <span key={d} className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-700 rounded-md border border-zinc-200">
-                              {d}
+                    return (
+                      <div
+                        key={ev.id}
+                        className={`bg-white border rounded-xl p-5 shadow-xs transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden ${
+                          isPast ? 'border-zinc-200 bg-zinc-50/60 opacity-80' : 'border-zinc-200 hover:border-orange-300'
+                        }`}
+                      >
+                        {isUpcomingTop && (
+                          <div className="absolute top-0 left-0 bg-orange-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-br-lg tracking-wider">
+                            NEXT UP • 最靠近活動
+                          </div>
+                        )}
+                        {isPast && (
+                          <div className="absolute top-0 left-0 bg-zinc-400 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-br-lg tracking-wider">
+                            已結束活動
+                          </div>
+                        )}
+
+                        <div className="space-y-2 flex-1 pt-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
+                              {ev.type}
                             </span>
-                          ))}
-                        </div>
+                            {ev.departments.map(d => (
+                              <span key={d} className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-700 rounded-md border border-zinc-200">
+                                {d}
+                              </span>
+                            ))}
+                          </div>
 
-                        <h3 className="text-base font-extrabold text-zinc-900 tracking-tight">{ev.name}</h3>
+                          <h3 className="text-base font-extrabold text-zinc-900 tracking-tight">{ev.name}</h3>
 
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600">
-                          <span className="font-bold text-zinc-900 flex items-center gap-1">
-                            <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
-                            {ev.date}
-                          </span>
-                          <span className="font-mono flex items-center gap-1">
-                            <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
-                            {ev.startTime} - {ev.endTime}
-                          </span>
-                          {ev.location && (
-                            <span className="text-zinc-500 flex items-center gap-1">
-                              <Icon name="mapPin" className="w-3.5 h-3.5 text-zinc-400" />
-                              {ev.location}
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600">
+                            <span className="font-bold text-zinc-900 flex items-center gap-1">
+                              <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
+                              {ev.date}
                             </span>
-                          )}
+                            <span className="font-mono flex items-center gap-1">
+                              <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
+                              {ev.startTime} - {ev.endTime}
+                            </span>
+                            {ev.location && (
+                              <span className="text-zinc-500 flex items-center gap-1">
+                                <Icon name="mapPin" className="w-3.5 h-3.5 text-zinc-400" />
+                                {ev.location}
+                              </span>
+                            )}
+                          </div>
+
+                          {ev.description && <p className="text-xs text-zinc-500">{ev.description}</p>}
                         </div>
 
-                        {ev.description && <p className="text-xs text-zinc-500">{ev.description}</p>}
+                        <div className="self-end md:self-center flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(ev)}
+                            className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                            title="編輯活動內容 (修復錯字或時間)"
+                          >
+                            <Icon name="edit" className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteEvent(ev.id, ev.name)}
+                            className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="刪除活動"
+                          >
+                            <Icon name="trash" className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
+                    );
+                  })}
 
-                      <div className="self-end md:self-center flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(ev)}
-                          className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                          title="編輯活動內容 (修復錯字或時間)"
-                        >
-                          <Icon name="edit" className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteEvent(ev.id, ev.name)}
-                          className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                          title="刪除活動"
-                        >
-                          <Icon name="trash" className="w-4 h-4" />
-                        </button>
-                      </div>
+                  {displayedEvents.length === 0 && (
+                    <div className="bg-white border border-zinc-200 rounded-xl p-8 text-center text-zinc-400">
+                      <Icon name="calendar" className="w-8 h-8 mx-auto mb-2 text-zinc-300" />
+                      <p className="text-sm font-bold text-zinc-600">目前無即將到來的活動</p>
+                      <p className="text-xs text-zinc-400 mt-1">
+                        過去活動仍完整保存在「2. 月行事曆」全月檢視中。點擊右上角「發布新活動」即可建立新行程。
+                      </p>
                     </div>
-                  ))}
+                  )}
+
+                  {pastEvents.length > 0 && (
+                    <div className="pt-2 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => setShowPast(!showPast)}
+                        className="text-xs text-zinc-500 hover:text-zinc-800 font-semibold px-4 py-2 rounded-lg border border-zinc-200 hover:border-zinc-300 bg-zinc-50 hover:bg-zinc-100 transition-colors flex items-center gap-1.5"
+                      >
+                        <Icon name={showPast ? "eyeOff" : "eye"} className="w-3.5 h-3.5 text-zinc-400" />
+                        <span>{showPast ? '隱藏已結束活動' : `查看已結束活動 (${pastEvents.length} 筆)`}</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -5055,7 +5105,7 @@
                         type="text"
                         value={location}
                         onChange={(e) => setLocation(e.target.value)}
-                        placeholder="例如：機器人實作工坊 (科學樓 B1)"
+                        placeholder="例如：科技中心"
                         className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
@@ -5739,7 +5789,7 @@
             dateStr: `${yyyy}-${mm}-${dd}`,
             display: `${d.getMonth() + 1}月${d.getDate()}日`,
             dayName: names[d.getDay()],
-            isToday: `${yyyy}-${mm}-${dd}` === '2026-09-18',
+            isToday: `${yyyy}-${mm}-${dd}` === getTodayDateStr(),
           };
         });
 
@@ -6780,13 +6830,20 @@
       function MemberCalendarTab({ events, member, savedIds, onToggleSave }) {
         const [subTab, setSubTab] = useState('list'); // 'list' | 'month'
         const [view, setView] = useState('personal');
+        const [showPast, setShowPast] = useState(false);
+        const todayStr = getTodayDateStr();
 
         const personalEvents = events.filter(e =>
           e.departments.some(d => member.departments.includes(d)) || savedIds.includes(e.id)
         );
 
-        const displayed = view === 'personal' ? personalEvents : events;
-        const upcoming = personalEvents.slice(0, 2);
+        const baseEvents = view === 'personal' ? personalEvents : events;
+        // Upcoming reminder banner: only active future/today personal events!
+        const upcoming = personalEvents.filter(e => e.date >= todayStr).slice(0, 2);
+
+        const upcomingEvents = baseEvents.filter(e => e.date >= todayStr);
+        const pastEvents = baseEvents.filter(e => e.date < todayStr);
+        const displayed = showPast ? baseEvents : upcomingEvents;
 
         return (
           <div className="space-y-6">
@@ -6953,6 +7010,29 @@
                       </div>
                     );
                   })}
+
+                  {displayed.length === 0 && (
+                    <div className="bg-white border border-zinc-200 rounded-xl p-8 text-center text-zinc-400">
+                      <Icon name="calendar" className="w-8 h-8 mx-auto mb-2 text-zinc-300" />
+                      <p className="text-sm font-bold text-zinc-600">目前無即將到來的活動</p>
+                      <p className="text-xs text-zinc-400 mt-1">
+                        所有過期活動仍完整呈現在「2. 月行事曆」全月檢視中。
+                      </p>
+                    </div>
+                  )}
+
+                  {pastEvents.length > 0 && (
+                    <div className="pt-2 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => setShowPast(!showPast)}
+                        className="text-xs text-zinc-500 hover:text-zinc-800 font-semibold px-4 py-2 rounded-lg border border-zinc-200 hover:border-zinc-300 bg-zinc-50 hover:bg-zinc-100 transition-colors flex items-center gap-1.5"
+                      >
+                        <Icon name={showPast ? "eyeOff" : "eye"} className="w-3.5 h-3.5 text-zinc-400" />
+                        <span>{showPast ? '隱藏已結束活動' : `查看已結束活動 (${pastEvents.length} 筆)`}</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -6961,7 +7041,7 @@
             {subTab === 'month' && (
               <div className="animate-in fade-in duration-150">
                 <MonthCalendarView
-                  events={displayed}
+                  events={baseEvents}
                   isAdmin={false}
                   savedIds={savedIds}
                   onToggleSave={onToggleSave}
@@ -7364,7 +7444,7 @@
             dateStr: `${yyyy}-${mm}-${dd}`,
             display: `${d.getMonth() + 1}月${d.getDate()}日`,
             dayName: names[d.getDay()],
-            isToday: `${yyyy}-${mm}-${dd}` === '2026-09-17',
+            isToday: `${yyyy}-${mm}-${dd}` === getTodayDateStr(),
           };
         });
 
