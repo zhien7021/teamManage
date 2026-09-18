@@ -344,7 +344,7 @@
         {
           id: 2,
           name: 'WPILib Swerve 自主移動演算法實機除錯',
-          type: '程式設計組培訓',
+          type: '程式控制組培訓',
           date: '2026-09-18',
           startTime: '18:30',
           endTime: '21:00',
@@ -1383,13 +1383,23 @@
           showToast('任務審核通過！', `隊員「${studentName}」的「${taskName}」已完成蓋章核可！`, 'success');
         };
 
-        const handleAddTask = (t) => {
-          const newTask = { ...t, id: Date.now(), status: 'pending' };
-          const nextTasks = [...tasks, newTask];
+        const handleAddTask = (taskOrTasks) => {
+          const taskList = Array.isArray(taskOrTasks) ? taskOrTasks : [taskOrTasks];
+          const now = Date.now();
+          const newTasks = taskList.map((item, idx) => ({
+            ...item,
+            id: now + idx,
+            status: 'pending',
+          }));
+          const nextTasks = [...tasks, ...newTasks];
           setTasks(nextTasks);
           try { localStorage.setItem('frc10114_tasks', JSON.stringify(nextTasks)); } catch (e) {}
           syncToCloud({ tasks: nextTasks });
-          showToast('已指派學習任務', `已建立「${t.taskName}」`, 'success');
+          if (newTasks.length > 1) {
+            showToast('已發布組別學習任務', `已為 ${newTasks.length} 位隊員建立「${newTasks[0].taskName}」考核項目`, 'success');
+          } else if (newTasks.length === 1) {
+            showToast('已指派學習任務', `已為「${newTasks[0].studentName}」建立「${newTasks[0].taskName}」`, 'success');
+          }
         };
 
         const handleDeleteTask = (taskId, studentName, taskName) => {
@@ -4357,6 +4367,7 @@
           switch (type) {
             case '機電整合組培訓':
               return 'bg-blue-100 text-blue-800 border-blue-200';
+            case '程式控制組培訓':
             case '程式設計組培訓':
               return 'bg-emerald-100 text-emerald-800 border-emerald-200';
             case '行銷管理組培訓':
@@ -4429,7 +4440,7 @@
                   <option value="all">全活動分類</option>
                   {[
                     '機電整合組培訓',
-                    '程式設計組培訓',
+                    '程式控制組培訓',
                     '行銷管理組培訓',
                     '多元競賽',
                     '教育推廣',
@@ -4707,7 +4718,7 @@
 
         const types = [
           '機電整合組培訓',
-          '程式設計組培訓',
+          '程式控制組培訓',
           '行銷管理組培訓',
           '多元競賽',
           '教育推廣',
@@ -5159,10 +5170,24 @@
 
         // --- 1. 學習集章 State ---
         const [isAddStampOpen, setIsAddStampOpen] = useState(false);
-        const [studentId, setStudentId] = useState(members[1]?.id || members[0]?.id || '');
+        const [assignMode, setAssignMode] = useState('dept'); // 'dept' (指定組別，預設) | 'student' (指定隊員)
+        const [targetDept, setTargetDept] = useState('機電整合組');
+        const [studentId, setStudentId] = useState('');
         const [taskName, setTaskName] = useState('');
         const [dept, setDept] = useState('機電整合組');
         const [stampFilter, setStampFilter] = useState('all');
+
+        const studentMembers = useMemo(() => {
+          return members
+            .filter(m => m.role !== 'admin')
+            .sort((a, b) => (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' }));
+        }, [members]);
+
+        useEffect(() => {
+          if (!studentId && studentMembers.length > 0) {
+            setStudentId(studentMembers[0].id);
+          }
+        }, [studentMembers, studentId]);
 
         const filteredStamps = tasks.filter(t => {
           if (stampFilter === 'pending') return t.status === 'pending';
@@ -5173,11 +5198,40 @@
         const handleAddStamp = (e) => {
           e.preventDefault();
           if (!taskName.trim()) return;
-          const stu = members.find(m => m.id === studentId) || members[0];
-          if (!stu) return;
-          if (onAddTask) {
-            onAddTask({ studentId: stu.id, studentName: stu.name, taskName: taskName.trim(), department: dept });
+
+          if (assignMode === 'dept') {
+            const targetMembers = studentMembers.filter(m =>
+              targetDept === 'all' ? true : (m.departments || []).includes(targetDept)
+            );
+
+            if (targetMembers.length === 0) {
+              alert(`目前「${targetDept === 'all' ? '全隊' : targetDept}」中尚無學生隊員`);
+              return;
+            }
+
+            const newTaskList = targetMembers.map(m => ({
+              studentId: m.id,
+              studentName: m.name,
+              taskName: taskName.trim(),
+              department: targetDept === 'all' ? (m.departments[0] || '全隊') : targetDept,
+            }));
+
+            if (onAddTask) {
+              onAddTask(newTaskList);
+            }
+          } else {
+            const stu = studentMembers.find(m => m.id === studentId) || studentMembers[0];
+            if (!stu) return;
+            if (onAddTask) {
+              onAddTask({
+                studentId: stu.id,
+                studentName: stu.name,
+                taskName: taskName.trim(),
+                department: dept,
+              });
+            }
           }
+
           setIsAddStampOpen(false);
           setTaskName('');
         };
@@ -5563,45 +5617,114 @@
                   </div>
 
                   <form onSubmit={handleAddStamp} className="space-y-4">
+                    {/* Mode Selector: 指定組別 (全組) vs 指定單一隊員 */}
                     <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-1">指定隊員 *</label>
-                      <select
-                        value={studentId}
-                        onChange={(e) => setStudentId(e.target.value)}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
-                      >
-                        {members.map(m => (
-                          <option key={m.id} value={m.id}>
-                            {m.name} ({m.id}) - {m.departments.join('/')}
-                          </option>
-                        ))}
-                      </select>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1.5">指派對象方式 (擇一) *</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAssignMode('dept')}
+                          className={`p-2.5 rounded-xl border text-left font-bold text-xs transition-all ${
+                            assignMode === 'dept'
+                              ? 'bg-orange-50 border-orange-500 text-orange-950 shadow-2xs'
+                              : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <Icon name="layers" className="w-3.5 h-3.5 text-orange-600" />
+                            <span>1. 指定組別 (全組)</span>
+                          </div>
+                          <div className="text-[10px] font-normal text-zinc-500 mt-1">發布給全組隊員進行考核</div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setAssignMode('student')}
+                          className={`p-2.5 rounded-xl border text-left font-bold text-xs transition-all ${
+                            assignMode === 'student'
+                              ? 'bg-orange-50 border-orange-500 text-orange-950 shadow-2xs'
+                              : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <Icon name="user" className="w-3.5 h-3.5 text-orange-600" />
+                            <span>2. 指定單一隊員</span>
+                          </div>
+                          <div className="text-[10px] font-normal text-zinc-500 mt-1">僅指派特定一位隊員</div>
+                        </button>
+                      </div>
                     </div>
 
+                    {assignMode === 'dept' ? (
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">受指派之組別 *</label>
+                        <select
+                          value={targetDept}
+                          onChange={(e) => setTargetDept(e.target.value)}
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        >
+                          <option value="機電整合組">機電整合組 (所屬隊員全員)</option>
+                          <option value="程式控制組">程式控制組 (所屬隊員全員)</option>
+                          <option value="行銷管理組">行銷管理組 (所屬隊員全員)</option>
+                          <option value="all">全隊所有隊員 (不限組別全員)</option>
+                        </select>
+                        <div className="text-[11px] text-zinc-500 mt-1.5 bg-orange-50/60 p-2 rounded-lg border border-orange-200/60">
+                          👥 此組別共有 <strong className="text-orange-600 font-bold">
+                            {studentMembers.filter(m => targetDept === 'all' ? true : (m.departments || []).includes(targetDept)).length}
+                          </strong> 位隊員，送出後每位隊員之個人學習集章卡皆會建立此項考核。
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">指定隊員 *</label>
+                        <select
+                          value={studentId}
+                          onChange={(e) => {
+                            setStudentId(e.target.value);
+                            const st = studentMembers.find(m => m.id === e.target.value);
+                            if (st && st.departments && st.departments[0]) setDept(st.departments[0]);
+                          }}
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        >
+                          {studentMembers.map(m => (
+                            <option key={m.id} value={m.id}>
+                              {m.id} - {m.name} ({m.departments.join('/')})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
                     <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-1">學習任務名稱 *</label>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">學習考核任務名稱 *</label>
                       <input
                         type="text"
                         required
                         value={taskName}
                         onChange={(e) => setTaskName(e.target.value)}
-                        placeholder="例如：3D 列印切片軟體參數設定考核"
+                        placeholder={
+                          assignMode === 'dept'
+                            ? "例如：CAN Bus 匯流排佈線量測考核"
+                            : "例如：3D 列印切片參數設定考核"
+                        }
                         className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-1">對應組別 *</label>
-                      <select
-                        value={dept}
-                        onChange={(e) => setDept(e.target.value)}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
-                      >
-                        <option value="機電整合組">機電整合組</option>
-                        <option value="程式控制組">程式控制組</option>
-                        <option value="行銷管理組">行銷管理組</option>
-                      </select>
-                    </div>
+                    {assignMode === 'student' && (
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">對應組別 *</label>
+                        <select
+                          value={dept}
+                          onChange={(e) => setDept(e.target.value)}
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        >
+                          <option value="機電整合組">機電整合組</option>
+                          <option value="程式控制組">程式控制組</option>
+                          <option value="行銷管理組">行銷管理組</option>
+                        </select>
+                      </div>
+                    )}
 
                     <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
                       <button
@@ -7058,7 +7181,10 @@
         const [taskName, setTaskName] = useState('');
         const [dept, setDept] = useState(member.departments[0]);
 
-        const myTasks = tasks.filter(t => t.studentId === member.id);
+        const myTasks = tasks.filter(t =>
+          t.studentId === member.id ||
+          (t.studentId === 'all' && (member.departments || []).includes(t.department))
+        );
 
         return (
           <div className="space-y-6">
