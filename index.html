@@ -954,7 +954,14 @@
 
         const [events, setEvents] = useState(() => {
           const s = localStorage.getItem('frc10114_events');
-          return s ? JSON.parse(s) : INITIAL_EVENTS;
+          const raw = s ? JSON.parse(s) : INITIAL_EVENTS;
+          return raw.map(ev => ({
+            ...ev,
+            type: ev.type ? ev.type.replace(/程式設計/g, '程式控制') : ev.type,
+            departments: Array.isArray(ev.departments)
+              ? ev.departments.map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d)
+              : ev.departments
+          }));
         });
 
         const [tasks, setTasks] = useState(() => {
@@ -1118,6 +1125,38 @@
         useEffect(() => { localStorage.setItem('frc10114_edu_categories', JSON.stringify(eduCategories)); }, [eduCategories]);
         useEffect(() => { localStorage.setItem('frc10114_eduequipment', JSON.stringify(eduEquipment)); }, [eduEquipment]);
 
+        // Auto-migration: ensure legacy '程式設計' in events is cleanly migrated to '程式控制'
+        useEffect(() => {
+          let hasEventMigration = false;
+          const cleanedEvents = events.map(ev => {
+            let changed = false;
+            let newType = ev.type;
+            if (typeof newType === 'string' && newType.includes('程式設計')) {
+              newType = newType.replace(/程式設計/g, '程式控制');
+              changed = true;
+            }
+            let newDepts = ev.departments;
+            if (Array.isArray(newDepts)) {
+              const updated = newDepts.map(d => typeof d === 'string' && d.includes('程式設計') ? d.replace(/程式設計/g, '程式控制') : d);
+              if (JSON.stringify(updated) !== JSON.stringify(newDepts)) {
+                newDepts = updated;
+                changed = true;
+              }
+            }
+            if (changed) {
+              hasEventMigration = true;
+              return { ...ev, type: newType, departments: newDepts };
+            }
+            return ev;
+          });
+
+          if (hasEventMigration) {
+            setEvents(cleanedEvents);
+            try { localStorage.setItem('frc10114_events', JSON.stringify(cleanedEvents)); } catch (e) {}
+            syncToCloud({ events: cleanedEvents });
+          }
+        }, []);
+
         // Real-time Firestore sync listener (Dual-Engine)
         useEffect(() => {
           if (!firebaseConfig) {
@@ -1149,10 +1188,22 @@
                   if (data.members && Array.isArray(data.members)) {
                     setMembers(data.members);
                     try { localStorage.setItem('frc10114_members', JSON.stringify(data.members)); } catch (e) {}
+                    setCurrentMember(prev => {
+                      if (!prev) return prev;
+                      const remoteCurrent = data.members.find(m => m.id === prev.id);
+                      return remoteCurrent ? { ...prev, ...remoteCurrent } : prev;
+                    });
                   }
                   if (data.events && Array.isArray(data.events)) {
-                    setEvents(data.events);
-                    try { localStorage.setItem('frc10114_events', JSON.stringify(data.events)); } catch (e) {}
+                    const cleanedRemoteEvents = data.events.map(ev => ({
+                      ...ev,
+                      type: ev.type ? ev.type.replace(/程式設計/g, '程式控制') : ev.type,
+                      departments: Array.isArray(ev.departments)
+                        ? ev.departments.map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d)
+                        : ev.departments
+                    }));
+                    setEvents(cleanedRemoteEvents);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(cleanedRemoteEvents)); } catch (e) {}
                   }
                   if (data.tasks && Array.isArray(data.tasks)) {
                     setTasks(data.tasks);
@@ -1274,9 +1325,17 @@
 
         // Auto sorted events by date + startTime ascending (NEAREST FIRST)
         const sortedEvents = useMemo(() => {
-          return [...events].sort((a, b) =>
-            `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`)
-          );
+          return [...events]
+            .map(ev => ({
+              ...ev,
+              type: ev.type ? ev.type.replace(/程式設計/g, '程式控制') : ev.type,
+              departments: Array.isArray(ev.departments)
+                ? ev.departments.map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d)
+                : ev.departments
+            }))
+            .sort((a, b) =>
+              `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`)
+            );
         }, [events]);
 
         // Auto sorted members by ID / number ascending
@@ -1487,14 +1546,18 @@
           return true;
         };
 
-        const handleSaveMotto = (memberId, newMotto) => {
-          const nextMembers = members.map(m => m.id === memberId ? { ...m, motto: newMotto } : m);
+        const handleSaveMotto = (memberIdOrMotto, maybeMotto) => {
+          const targetId = maybeMotto !== undefined ? memberIdOrMotto : (currentMember ? currentMember.id : '');
+          const newMotto = (maybeMotto !== undefined ? maybeMotto : memberIdOrMotto) || '';
+          const trimmedMotto = typeof newMotto === 'string' ? newMotto.trim() : '';
+
+          const nextMembers = members.map(m => m.id === targetId ? { ...m, motto: trimmedMotto } : m);
           setMembers(nextMembers);
-          if (currentMember.id === memberId) {
-            setCurrentMember(prev => ({ ...prev, motto: newMotto }));
+          if (currentMember && currentMember.id === targetId) {
+            setCurrentMember(prev => ({ ...prev, motto: trimmedMotto }));
           }
-          if (draftMember.id === memberId) {
-            setDraftMember(prev => ({ ...prev, motto: newMotto }));
+          if (draftMember && draftMember.id === targetId) {
+            setDraftMember(prev => ({ ...prev, motto: trimmedMotto }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
           syncToCloud({ members: nextMembers });
@@ -5125,11 +5188,14 @@
         const handleOpenEdit = (ev) => {
           setEditingEvent(ev);
           setName(ev.name || '');
-          setType(ev.type || '機電整合組培訓');
+          const normalizedType = ev.type ? ev.type.replace(/程式設計/g, '程式控制') : '機電整合組培訓';
+          setType(normalizedType);
           setDate(ev.date || getTodayDateStr());
           setStartTime(ev.startTime || '18:00');
           setEndTime(ev.endTime || '21:00');
-          setDepts(ev.departments && ev.departments.length > 0 ? ev.departments : ['機電整合組']);
+          const normalizedDepts = (ev.departments && ev.departments.length > 0 ? ev.departments : ['機電整合組'])
+            .map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d);
+          setDepts(normalizedDepts);
           setLocation(ev.location || '科技中心');
           setDescription(ev.description || '');
           setIsAddOpen(true);
@@ -5137,11 +5203,19 @@
 
         const todayStr = getTodayDateStr();
 
-        const filtered = events.filter(e => {
-          if (deptFilter !== 'all' && !e.departments.includes(deptFilter)) return false;
-          if (typeFilter !== 'all' && e.type !== typeFilter) return false;
-          return true;
-        });
+        const filtered = events
+          .map(e => ({
+            ...e,
+            type: e.type ? e.type.replace(/程式設計/g, '程式控制') : e.type,
+            departments: Array.isArray(e.departments)
+              ? e.departments.map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d)
+              : e.departments
+          }))
+          .filter(e => {
+            if (deptFilter !== 'all' && !e.departments.includes(deptFilter)) return false;
+            if (typeFilter !== 'all' && e.type !== typeFilter) return false;
+            return true;
+          });
 
         const upcomingEvents = filtered.filter(e => e.date >= todayStr);
         const pastEvents = filtered.filter(e => e.date < todayStr);
@@ -5150,16 +5224,18 @@
         const handleSubmit = (e) => {
           e.preventDefault();
           if (!name.trim()) return;
+          const normalizedType = type ? type.replace(/程式設計/g, '程式控制') : '機電整合組培訓';
+          const normalizedDepts = depts.map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d);
           if (editingEvent) {
             if (onUpdateEvent) {
               onUpdateEvent({
                 ...editingEvent,
                 name: name.trim(),
-                type,
+                type: normalizedType,
                 date,
                 startTime,
                 endTime,
-                departments: depts,
+                departments: normalizedDepts,
                 location,
                 description,
               });
@@ -5167,11 +5243,11 @@
           } else {
             onAddEvent({
               name: name.trim(),
-              type,
+              type: normalizedType,
               date,
               startTime,
               endTime,
-              departments: depts,
+              departments: normalizedDepts,
               location,
               description,
             });
@@ -8039,17 +8115,27 @@
                   />
                   <div className="flex justify-end gap-2">
                     <button
-                      onClick={() => setIsEditing(false)}
-                      className="px-3 py-1.5 border border-zinc-200 text-zinc-600 rounded-lg text-xs"
+                      type="button"
+                      onClick={() => {
+                        setMotto(member.motto || '');
+                        setIsEditing(false);
+                      }}
+                      className="px-3 py-1.5 border border-zinc-200 text-zinc-600 rounded-lg text-xs hover:bg-zinc-50"
                     >
                       取消
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
-                        onSaveMotto(motto);
+                        const trimmed = (motto || '').trim();
+                        if (onSaveMotto) {
+                          onSaveMotto(member.id, trimmed);
+                        }
+                        setMotto(trimmed);
+                        setEditMotto(trimmed);
                         setIsEditing(false);
                       }}
-                      className="px-4 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold"
+                      className="px-4 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
                     >
                       儲存座右銘
                     </button>
@@ -8058,7 +8144,7 @@
               ) : (
                 <div className="p-4 bg-orange-50/60 border border-orange-200 rounded-xl">
                   <p className="text-sm font-extrabold text-zinc-900 italic">
-                    「{member.motto || '堅持熱愛，讓機構與程式在賽場上精準綻放！'}」
+                    「{motto || member.motto || '堅持熱愛，讓機構與程式在賽場上精準綻放！'}」
                   </p>
                   <p className="text-[10px] text-zinc-400 mt-2 font-mono">— {member.name} (FRC 10114)</p>
                 </div>

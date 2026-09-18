@@ -25,7 +25,7 @@ interface AdminCalendarProps {
 
 const EVENT_TYPES: EventType[] = [
   '機電整合組培訓',
-  '程式設計組培訓',
+  '程式控制組培訓',
   '行銷管理組培訓',
   '多元競賽',
   '教育推廣',
@@ -232,7 +232,7 @@ export const AdminCalendar: React.FC<AdminCalendarProps> = ({
             {filteredEvents.map((ev, index) => {
               const typeColor = {
                 機電整合組培訓: 'bg-blue-50 text-blue-700 border-blue-200',
-                程式設計組培訓: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                程式控制組培訓: 'bg-emerald-50 text-emerald-700 border-emerald-200',
                 行銷管理組培訓: 'bg-purple-50 text-purple-700 border-purple-200',
                 多元競賽: 'bg-orange-50 text-orange-700 border-orange-200',
                 教育推廣: 'bg-amber-50 text-amber-700 border-amber-200',

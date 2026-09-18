@@ -269,7 +269,7 @@ export const INITIAL_EVENTS: TeamEvent[] = [
   {
     id: 2,
     name: 'WPILib Swerve 自主移動演算法實機除錯',
-    type: '程式設計組培訓',
+    type: '程式控制組培訓',
     date: '2026-09-18',
     startTime: '18:30',
     endTime: '21:00',
