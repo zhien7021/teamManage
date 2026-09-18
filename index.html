@@ -99,6 +99,13 @@
           phone: '0912-345-678',
           role: 'admin',
           password: '10114admin',
+          englishName: 'Coach Hsu',
+          passportName: 'HSU, CHIA-CHENG',
+          birthDate: '1985-06-18',
+          nationalId: 'A123456789',
+          address: '新北市中和區錦和路163號 (錦和高中科技中心)',
+          guardianName: '許教練本人',
+          guardianPhone: '0912-345-678',
         },
         {
           id: '10114-002',
@@ -109,6 +116,13 @@
           phone: '0988-111-222',
           role: 'member',
           password: '10114',
+          englishName: 'Enxuan',
+          passportName: 'LIN, EN-HSUAN',
+          birthDate: '2008-07-15',
+          nationalId: 'F234567890',
+          address: '新北市中和區錦和路163號',
+          guardianName: '林家長',
+          guardianPhone: '0988-888-111',
         },
         {
           id: '10114-008',
@@ -119,6 +133,13 @@
           phone: '0977-333-444',
           role: 'member',
           password: '10114',
+          englishName: 'Xiao-Ming',
+          passportName: 'WANG, HSIAO-MING',
+          birthDate: '2008-11-20',
+          nationalId: 'F123456781',
+          address: '新北市中和區圓通路290號',
+          guardianName: '王家長',
+          guardianPhone: '0977-777-222',
         },
         {
           id: '10114-012',
@@ -129,6 +150,13 @@
           phone: '0966-555-666',
           role: 'member',
           password: '10114',
+          englishName: 'David',
+          passportName: 'CHEN, TA-MING',
+          birthDate: '2008-03-08',
+          nationalId: 'F123456782',
+          address: '新北市永和區中正路100號',
+          guardianName: '陳家長',
+          guardianPhone: '0966-666-333',
         },
         {
           id: '10114-015',
@@ -139,6 +167,13 @@
           phone: '0955-777-888',
           role: 'member',
           password: '10114',
+          englishName: 'Sunny',
+          passportName: 'ZHANG, YONG-QING',
+          birthDate: '2009-01-25',
+          nationalId: 'A234567893',
+          address: '新北市中和區連城路200號',
+          guardianName: '張家長',
+          guardianPhone: '0955-555-444',
         },
         {
           id: '10114-018',
@@ -149,6 +184,13 @@
           phone: '0933-888-999',
           role: 'member',
           password: '10114',
+          englishName: 'Hanna',
+          passportName: 'LIAO, TZU-HAN',
+          birthDate: '2008-09-12',
+          nationalId: 'F234567894',
+          address: '新北市板橋區縣民大道二段',
+          guardianName: '廖家長',
+          guardianPhone: '0933-333-555',
         },
       ];
 
@@ -1316,7 +1358,14 @@
             (draftMember.phone || '') !== (originalMember.phone || '') ||
             (draftMember.avatar || '') !== (originalMember.avatar || '') ||
             (draftMember.password || '') !== (originalMember.password || '') ||
-            (draftMember.role || 'member') !== (originalMember.role || 'member');
+            (draftMember.role || 'member') !== (originalMember.role || 'member') ||
+            (draftMember.englishName || '') !== (originalMember.englishName || '') ||
+            (draftMember.passportName || '') !== (originalMember.passportName || '') ||
+            (draftMember.birthDate || '') !== (originalMember.birthDate || '') ||
+            (draftMember.nationalId || '') !== (originalMember.nationalId || '') ||
+            (draftMember.address || '') !== (originalMember.address || '') ||
+            (draftMember.guardianName || '') !== (originalMember.guardianName || '') ||
+            (draftMember.guardianPhone || '') !== (originalMember.guardianPhone || '');
           const deptsDiff =
             draftMember.departments.length !== originalMember.departments.length ||
             !draftMember.departments.every(d => originalMember.departments.includes(d));
@@ -1795,6 +1844,43 @@
           }
         };
 
+        const handleExportMembersList = () => {
+          const headers = [
+            '隊員編號 (學號)',
+            '姓名',
+            '常用英文名',
+            '護照英文名',
+            '出生年月日 (西元)',
+            '身分證字號',
+            '電子郵件',
+            '聯絡電話',
+            '戶籍/通訊地址',
+            '監護人姓名',
+            '監護人電話',
+            '所屬組別',
+            '系統身分',
+            '座右銘/期許'
+          ];
+          const rows = sortedMembers.map(m => [
+            m.id || '',
+            m.name || '',
+            m.englishName || '',
+            m.passportName || '',
+            m.birthDate || '',
+            m.nationalId || '',
+            m.email || '',
+            m.phone || '',
+            m.address || '',
+            m.guardianName || '',
+            m.guardianPhone || '',
+            (m.departments || []).join('、'),
+            m.role === 'admin' ? '管理員教練' : '隊員',
+            m.motto || ''
+          ]);
+          exportToCSV(`FRC10114_隊員完整資料名冊_${getTodayDateStr()}.csv`, headers, rows);
+          showToast('隊員資料已成功匯出！', '已下載包含英文名、護照、生日、身分證、地址及監護人完整資料之 CSV 檔案', 'success');
+        };
+
         const handleUpdateMemberAvatar = (memberId, avatarDataUrl) => {
           const nextMembers = members.map(m => m.id === memberId ? { ...m, avatar: avatarDataUrl } : m);
           setMembers(nextMembers);
@@ -2263,8 +2349,18 @@
                     <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
                       <button
                         type="button"
+                        onClick={handleExportMembersList}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-orange-50 border border-orange-300 text-orange-700 font-bold text-xs rounded-lg shadow-2xs transition-colors cursor-pointer"
+                        title="將全隊隊員之身分、英文名、護照、生日、身分證、地址與監護人等完整資料匯出為 Excel / CSV 檔案"
+                      >
+                        <Icon name="download" className="w-4 h-4 text-orange-600" />
+                        <span>匯出隊員資料 (CSV)</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => setIsAddAdminModalOpen(true)}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs rounded-lg shadow-xs transition-colors"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
                       >
                         <Icon name="shieldCheck" className="w-4 h-4 text-orange-400" />
                         <span>＋ 新增管理員教練</span>
@@ -2282,15 +2378,22 @@
                             motto: '熱愛工程，追求突破！',
                             role: 'member',
                             password: '10114',
+                            englishName: '',
+                            passportName: '',
+                            birthDate: '',
+                            nationalId: '',
+                            address: '',
+                            guardianName: '',
+                            guardianPhone: '',
                           };
                           const next = [...members, newM];
                           setMembers(next);
                           setSelectedMemberId(newM.id);
                           try { localStorage.setItem('frc10114_members', JSON.stringify(next)); } catch (e) {}
                           syncToCloud({ members: next });
-                          showToast('已建立新隊員', `隊員 ${newM.id} 已加入名單，請於右方編輯資料`, 'success');
+                          showToast('已建立新隊員', `隊員 ${newM.id} 已加入名單，請於右方編輯完整資料`, 'success');
                         }}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
                       >
                         <Icon name="plus" className="w-4 h-4" />
                         <span>新增隊員名額</span>
@@ -2521,6 +2624,7 @@
                               )}
                             </div>
                           </div>
+                          {/* 基本身分與英文姓名 */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
                               <label className="block text-xs font-bold text-zinc-700 mb-1">姓名 *</label>
@@ -2532,7 +2636,7 @@
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-zinc-700 mb-1">隊員編號 (ID) *</label>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">隊員編號 (學號) *</label>
                               <input
                                 type="text"
                                 value={draftMember.id}
@@ -2541,22 +2645,113 @@
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-zinc-700 mb-1">電子郵件 (Email) *</label>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">1. 常用英文名</label>
                               <input
-                                type="email"
-                                value={draftMember.email}
-                                onChange={(e) => setDraftMember({ ...draftMember, email: e.target.value })}
+                                type="text"
+                                value={draftMember.englishName || ''}
+                                onChange={(e) => setDraftMember({ ...draftMember, englishName: e.target.value })}
+                                placeholder="例如：Alex / Eric / David"
                                 className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-zinc-700 mb-1">聯絡電話</label>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">2. 護照英文名</label>
                               <input
                                 type="text"
-                                value={draftMember.phone || ''}
-                                onChange={(e) => setDraftMember({ ...draftMember, phone: e.target.value })}
+                                value={draftMember.passportName || ''}
+                                onChange={(e) => setDraftMember({ ...draftMember, passportName: e.target.value })}
+                                placeholder="例如：LIN, EN-HSUAN (依護照拼音)"
+                                className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                              />
+                            </div>
+                          </div>
+
+                          {/* 出生身分與身分證字號 */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">3. 出生年月日 (西元) *</label>
+                              <input
+                                type="date"
+                                value={draftMember.birthDate || ''}
+                                onChange={(e) => setDraftMember({ ...draftMember, birthDate: e.target.value })}
                                 className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                               />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">4. 身分證字號 *</label>
+                              <input
+                                type="text"
+                                value={draftMember.nationalId || ''}
+                                onChange={(e) => setDraftMember({ ...draftMember, nationalId: e.target.value.toUpperCase() })}
+                                placeholder="例如：A123456789 (出入境與保險查驗用)"
+                                className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                              />
+                            </div>
+                          </div>
+
+                          {/* 聯絡資訊與地址 */}
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs font-bold text-zinc-700 mb-1">6. 電子郵件 (Email) *</label>
+                                <input
+                                  type="email"
+                                  value={draftMember.email}
+                                  onChange={(e) => setDraftMember({ ...draftMember, email: e.target.value })}
+                                  className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-zinc-700 mb-1">7. 聯絡電話</label>
+                                <input
+                                  type="tel"
+                                  value={draftMember.phone || ''}
+                                  onChange={(e) => setDraftMember({ ...draftMember, phone: e.target.value })}
+                                  placeholder="例如：0912-345-678"
+                                  className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">5. 戶籍 / 通訊地址</label>
+                              <input
+                                type="text"
+                                value={draftMember.address || ''}
+                                onChange={(e) => setDraftMember({ ...draftMember, address: e.target.value })}
+                                placeholder="例如：新北市中和區錦和路163號"
+                                className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                              />
+                            </div>
+                          </div>
+
+                          {/* 監護人與緊急聯絡人 */}
+                          <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-zinc-800">法定監護人與緊急聯絡人</span>
+                              <span className="text-[11px] text-zinc-500">賽事外出、夜間實作與緊急聯繫使用</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs font-bold text-zinc-700 mb-1">8. 監護人姓名</label>
+                                <input
+                                  type="text"
+                                  value={draftMember.guardianName || ''}
+                                  onChange={(e) => setDraftMember({ ...draftMember, guardianName: e.target.value })}
+                                  placeholder="例如：林家長 / 父親 / 母親"
+                                  className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-zinc-700 mb-1">9. 監護人電話</label>
+                                <input
+                                  type="tel"
+                                  value={draftMember.guardianPhone || ''}
+                                  onChange={(e) => setDraftMember({ ...draftMember, guardianPhone: e.target.value })}
+                                  placeholder="例如：0988-111-222"
+                                  className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                                />
+                              </div>
                             </div>
                           </div>
 
@@ -7664,6 +7859,13 @@
         const [editEmail, setEditEmail] = useState(member.email || '');
         const [editMotto, setEditMotto] = useState(member.motto || '');
         const [editDepartments, setEditDepartments] = useState(member.departments || ['機電整合組']);
+        const [editEnglishName, setEditEnglishName] = useState(member.englishName || '');
+        const [editPassportName, setEditPassportName] = useState(member.passportName || '');
+        const [editBirthDate, setEditBirthDate] = useState(member.birthDate || '');
+        const [editNationalId, setEditNationalId] = useState(member.nationalId || '');
+        const [editAddress, setEditAddress] = useState(member.address || '');
+        const [editGuardianName, setEditGuardianName] = useState(member.guardianName || '');
+        const [editGuardianPhone, setEditGuardianPhone] = useState(member.guardianPhone || '');
 
         useEffect(() => {
           setEditName(member.name || '');
@@ -7671,7 +7873,18 @@
           setEditEmail(member.email || '');
           setEditMotto(member.motto || '');
           setEditDepartments(member.departments || ['機電整合組']);
-        }, [member.id, member.name, member.phone, member.email, member.motto, member.departments]);
+          setEditEnglishName(member.englishName || '');
+          setEditPassportName(member.passportName || '');
+          setEditBirthDate(member.birthDate || '');
+          setEditNationalId(member.nationalId || '');
+          setEditAddress(member.address || '');
+          setEditGuardianName(member.guardianName || '');
+          setEditGuardianPhone(member.guardianPhone || '');
+        }, [
+          member.id, member.name, member.phone, member.email, member.motto, member.departments,
+          member.englishName, member.passportName, member.birthDate, member.nationalId,
+          member.address, member.guardianName, member.guardianPhone
+        ]);
 
         const toggleEditDept = (deptName) => {
           setEditDepartments(prev => {
@@ -7702,8 +7915,16 @@
               email: editEmail.trim(),
               motto: editMotto.trim(),
               departments: finalDepartments,
+              englishName: editEnglishName.trim(),
+              passportName: editPassportName.trim(),
+              birthDate: editBirthDate.trim(),
+              nationalId: editNationalId.trim().toUpperCase(),
+              address: editAddress.trim(),
+              guardianName: editGuardianName.trim(),
+              guardianPhone: editGuardianPhone.trim(),
             });
             if (ok) {
+              setMotto(editMotto.trim());
               setIsEditProfileOpen(false);
             }
           }
@@ -8082,6 +8303,76 @@
               )}
             </div>
 
+            {/* 隊員詳細個人資料檔案 (賽務與保險登記) */}
+            <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-orange-50 text-orange-600 rounded-lg">
+                    <Icon name="user" className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-zinc-900">隊員詳細個人資料（出賽與身分登記）</h3>
+                    <p className="text-[11px] text-zinc-400">賽事檢錄、出入境機票、平安保險與緊急聯絡專屬資料</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsEditProfileOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+                >
+                  <Icon name="edit" className="w-3.5 h-3.5 text-orange-400" />
+                  <span>編輯詳細資料</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">1. 常用英文名</span>
+                  <p className="font-bold text-zinc-900 text-sm">{member.englishName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">2. 護照英文名</span>
+                  <p className="font-mono font-bold text-zinc-900 text-sm">{member.passportName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">3. 出生年月日 (西元)</span>
+                  <p className="font-mono font-bold text-zinc-900 text-sm">{member.birthDate || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">4. 身分證字號</span>
+                  <p className="font-mono font-bold text-zinc-900 text-sm">{member.nationalId || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">6. 電子信箱</span>
+                  <p className="font-mono text-zinc-800 truncate">{member.email || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">7. 聯絡電話</span>
+                  <p className="font-mono font-bold text-zinc-900">{member.phone || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1 md:col-span-2 lg:col-span-3">
+                  <span className="text-[11px] font-bold text-zinc-400">5. 戶籍 / 通訊地址</span>
+                  <p className="font-medium text-zinc-800">{member.address || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-orange-50/50 border border-orange-200 rounded-xl space-y-1 md:col-span-1 lg:col-span-1">
+                  <span className="text-[11px] font-bold text-orange-700">8. 監護人姓名</span>
+                  <p className="font-bold text-zinc-900 text-sm">{member.guardianName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-orange-50/50 border border-orange-200 rounded-xl space-y-1 md:col-span-1 lg:col-span-2">
+                  <span className="text-[11px] font-bold text-orange-700">9. 監護人聯絡電話</span>
+                  <p className="font-mono font-bold text-zinc-900 text-sm">{member.guardianPhone || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+              </div>
+            </div>
+
             {/* 給自己的一句話 (座右銘) */}
             <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
@@ -8341,14 +8632,14 @@
             {/* Modal: 編輯個人資料 */}
             {isEditProfileOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-                <div className="bg-white border border-zinc-200 w-full max-w-md rounded-2xl shadow-2xl p-6 overflow-hidden">
-                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
+                <div className="bg-white border border-zinc-200 w-full max-w-xl max-h-[90vh] rounded-2xl shadow-2xl p-6 overflow-y-auto">
+                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4 sticky top-0 bg-white z-10">
                     <div className="flex items-center gap-2">
                       <div className="p-2 bg-orange-50 text-orange-600 rounded-lg">
                         <Icon name="edit" className="w-4 h-4" />
                       </div>
                       <div>
-                        <h3 className="text-base font-bold text-zinc-900">編輯個人資料</h3>
+                        <h3 className="text-base font-bold text-zinc-900">編輯個人詳細資料</h3>
                         <p className="text-xs text-zinc-500">修改後即時同步更新至雲端名冊與全隊資料庫</p>
                       </div>
                     </div>
@@ -8362,21 +8653,66 @@
                   </div>
 
                   <form onSubmit={handleSaveProfileForm} className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-1">姓名 *</label>
-                      <input
-                        type="text"
-                        required
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        placeholder="請輸入姓名"
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
-                      />
+                    {/* 基本身分與英文姓名 */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">姓名 *</label>
+                        <input
+                          type="text"
+                          required
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          placeholder="請輸入中文姓名"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">1. 常用英文名</label>
+                        <input
+                          type="text"
+                          value={editEnglishName}
+                          onChange={(e) => setEditEnglishName(e.target.value)}
+                          placeholder="例如：Alex / Eric / David"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-bold text-zinc-700 mb-1">聯絡電話</label>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">2. 護照英文名</label>
+                        <input
+                          type="text"
+                          value={editPassportName}
+                          onChange={(e) => setEditPassportName(e.target.value)}
+                          placeholder="例如：LIN, EN-HSUAN (依護照拼音)"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">3. 出生年月日 (西元) *</label>
+                        <input
+                          type="date"
+                          value={editBirthDate}
+                          onChange={(e) => setEditBirthDate(e.target.value)}
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">4. 身分證字號</label>
+                        <input
+                          type="text"
+                          value={editNationalId}
+                          onChange={(e) => setEditNationalId(e.target.value.toUpperCase())}
+                          placeholder="例如：A123456789 (出入境與保險查驗用)"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">7. 聯絡電話</label>
                         <input
                           type="tel"
                           value={editPhone}
@@ -8385,15 +8721,57 @@
                           className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                         />
                       </div>
-                      <div>
-                        <label className="block text-xs font-bold text-zinc-700 mb-1">電子郵件</label>
-                        <input
-                          type="email"
-                          value={editEmail}
-                          onChange={(e) => setEditEmail(e.target.value)}
-                          placeholder="例如：student@frc10114.org"
-                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
-                        />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">6. 電子信箱</label>
+                      <input
+                        type="email"
+                        value={editEmail}
+                        onChange={(e) => setEditEmail(e.target.value)}
+                        placeholder="例如：student@frc10114.org"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">5. 戶籍 / 通訊地址</label>
+                      <input
+                        type="text"
+                        value={editAddress}
+                        onChange={(e) => setEditAddress(e.target.value)}
+                        placeholder="例如：新北市中和區錦和路163號"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+
+                    {/* 監護人與緊急聯絡人 */}
+                    <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-zinc-800">法定監護人與緊急聯絡電話</span>
+                        <span className="text-[10px] text-zinc-500">外宿賽事與緊急通報用</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1">8. 監護人姓名</label>
+                          <input
+                            type="text"
+                            value={editGuardianName}
+                            onChange={(e) => setEditGuardianName(e.target.value)}
+                            placeholder="例如：林家長 / 父親 / 母親"
+                            className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1">9. 監護人聯絡電話</label>
+                          <input
+                            type="tel"
+                            value={editGuardianPhone}
+                            onChange={(e) => setEditGuardianPhone(e.target.value)}
+                            placeholder="例如：0988-111-222"
+                            className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -9996,18 +10374,41 @@
 
         const handleExportMembers = () => {
           exportToCSV(
-            `FRC10114_隊員名冊_${getTodayStr()}.csv`,
-            ['隊員編號', '姓名', '電子郵件', '所屬組別', '系統身分', '座右銘/個人期許'],
+            `FRC10114_隊員完整名冊_${getTodayStr()}.csv`,
+            [
+              '隊員編號 (學號)',
+              '姓名',
+              '常用英文名',
+              '護照英文名',
+              '出生年月日 (西元)',
+              '身分證字號',
+              '電子郵件',
+              '聯絡電話',
+              '戶籍/通訊地址',
+              '監護人姓名',
+              '監護人電話',
+              '所屬組別',
+              '系統身分',
+              '座右銘/個人期許'
+            ],
             members.map(m => [
-              m.id,
-              m.name,
-              m.email,
+              m.id || '',
+              m.name || '',
+              m.englishName || '',
+              m.passportName || '',
+              m.birthDate || '',
+              m.nationalId || '',
+              m.email || '',
+              m.phone || '',
+              m.address || '',
+              m.guardianName || '',
+              m.guardianPhone || '',
               (m.departments || []).join('、'),
               m.role === 'admin' ? '管理員教練' : '隊員',
               m.motto || ''
             ])
           );
-          showToast('隊員名冊已下載', '已產生 Excel/CSV 檔案', 'success');
+          showToast('隊員名冊已下載', '已產生包含英文名、護照、生日、身分證、地址及監護人之 Excel/CSV 檔案', 'success');
         };
 
         const handleExportEvents = () => {

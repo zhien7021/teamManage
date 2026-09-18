@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  UserCheck,
   Quote,
   Save,
   Award,
@@ -10,6 +9,9 @@ import {
   Camera,
   Upload,
   Trash2,
+  User,
+  Edit,
+  X,
 } from 'lucide-react';
 import { Member, LearningTask, TeamEvent } from '../../types';
 
@@ -20,6 +22,7 @@ interface MemberProfileProps {
   onUpdateMotto: (newMotto: string) => void;
   onUpdateAvatar?: (memberId: string, avatarUrl: string) => void;
   onRemoveAvatar?: (memberId: string) => void;
+  onUpdateMember?: (updated: Member) => void;
   onShowToast: (
     title: string,
     message?: string,
@@ -34,11 +37,59 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
   onUpdateMotto,
   onUpdateAvatar,
   onRemoveAvatar,
+  onUpdateMember,
   onShowToast,
 }) => {
   const [mottoText, setMottoText] = useState(member.motto || '');
   const [isEditing, setIsEditing] = useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Profile fields state & modal
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [editName, setEditName] = useState(member.name || '');
+  const [editEnglishName, setEditEnglishName] = useState(member.englishName || '');
+  const [editPassportName, setEditPassportName] = useState(member.passportName || '');
+  const [editBirthDate, setEditBirthDate] = useState(member.birthDate || '');
+  const [editNationalId, setEditNationalId] = useState(member.nationalId || '');
+  const [editAddress, setEditAddress] = useState(member.address || '');
+  const [editEmail, setEditEmail] = useState(member.email || '');
+  const [editPhone, setEditPhone] = useState(member.phone || '');
+  const [editGuardianName, setEditGuardianName] = useState(member.guardianName || '');
+  const [editGuardianPhone, setEditGuardianPhone] = useState(member.guardianPhone || '');
+
+  useEffect(() => {
+    setEditName(member.name || '');
+    setEditEnglishName(member.englishName || '');
+    setEditPassportName(member.passportName || '');
+    setEditBirthDate(member.birthDate || '');
+    setEditNationalId(member.nationalId || '');
+    setEditAddress(member.address || '');
+    setEditEmail(member.email || '');
+    setEditPhone(member.phone || '');
+    setEditGuardianName(member.guardianName || '');
+    setEditGuardianPhone(member.guardianPhone || '');
+  }, [member]);
+
+  const handleSaveProfileForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onUpdateMember) return;
+    const updated: Member = {
+      ...member,
+      name: editName.trim() || member.name,
+      englishName: editEnglishName.trim(),
+      passportName: editPassportName.trim().toUpperCase(),
+      birthDate: editBirthDate.trim(),
+      nationalId: editNationalId.trim().toUpperCase(),
+      address: editAddress.trim(),
+      email: editEmail.trim() || member.email,
+      phone: editPhone.trim(),
+      guardianName: editGuardianName.trim(),
+      guardianPhone: editGuardianPhone.trim(),
+    };
+    onUpdateMember(updated);
+    setIsEditProfileOpen(false);
+    onShowToast('個人資料儲存成功', '個人出賽與身分登記資料已更新', 'success');
+  };
 
   const myTasks = learningTasks.filter((t) => t.studentId === member.id);
   const myCompletedTasks = myTasks.filter((t) => t.status === 'completed');
@@ -227,6 +278,78 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
         </div>
       </div>
 
+      {/* 隊員詳細個人資料檔案 (賽務與保險登記) */}
+      <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-orange-50 text-orange-600 rounded-lg">
+              <User className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-zinc-900">隊員詳細個人資料（出賽與身分登記）</h3>
+              <p className="text-[11px] text-zinc-400">賽事檢錄、出入境機票、平安保險與緊急聯絡專屬資料</p>
+            </div>
+          </div>
+          {onUpdateMember && (
+            <button
+              type="button"
+              onClick={() => setIsEditProfileOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+            >
+              <Edit className="w-3.5 h-3.5 text-orange-400" />
+              <span>編輯詳細資料</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">1. 常用英文名</span>
+            <p className="font-bold text-zinc-900 text-sm">{member.englishName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">2. 護照英文名</span>
+            <p className="font-mono font-bold text-zinc-900 text-sm">{member.passportName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">3. 出生年月日 (西元)</span>
+            <p className="font-mono font-bold text-zinc-900 text-sm">{member.birthDate || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">4. 身分證字號</span>
+            <p className="font-mono font-bold text-zinc-900 text-sm">{member.nationalId || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">6. 電子信箱</span>
+            <p className="font-mono text-zinc-800 truncate">{member.email || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">7. 聯絡電話</span>
+            <p className="font-mono font-bold text-zinc-900">{member.phone || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1 md:col-span-2 lg:col-span-3">
+            <span className="text-[11px] font-bold text-zinc-400">5. 戶籍 / 通訊地址</span>
+            <p className="font-medium text-zinc-800">{member.address || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-orange-50/50 border border-orange-200 rounded-xl space-y-1 md:col-span-1 lg:col-span-1">
+            <span className="text-[11px] font-bold text-orange-700">8. 監護人姓名</span>
+            <p className="font-bold text-zinc-900 text-sm">{member.guardianName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-orange-50/50 border border-orange-200 rounded-xl space-y-1 md:col-span-1 lg:col-span-2">
+            <span className="text-[11px] font-bold text-orange-700">9. 監護人聯絡電話</span>
+            <p className="font-mono font-bold text-zinc-900 text-sm">{member.guardianPhone || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+        </div>
+      </div>
+
       {/* Feature 1: 給自己的一句話 (Motto /初心提醒) */}
       <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
@@ -371,6 +494,160 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 編輯個人詳細資料彈窗 */}
+      {isEditProfileOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white border border-zinc-200 w-full max-w-xl rounded-2xl shadow-2xl p-6 overflow-hidden max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
+              <div>
+                <h3 className="text-base font-extrabold text-zinc-900">編輯個人詳細資料</h3>
+                <p className="text-xs text-zinc-500">更新個人出賽檢錄、英文證照與保險緊急聯絡資料</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditProfileOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfileForm} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">中文姓名 *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="請輸入中文姓名"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">1. 常用英文名</label>
+                  <input
+                    type="text"
+                    value={editEnglishName}
+                    onChange={(e) => setEditEnglishName(e.target.value)}
+                    placeholder="例如：Alex / Eric / David"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">2. 護照英文名</label>
+                  <input
+                    type="text"
+                    value={editPassportName}
+                    onChange={(e) => setEditPassportName(e.target.value.toUpperCase())}
+                    placeholder="例如：LIN, EN-XUAN (依護照拼音)"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium focus:ring-2 focus:ring-orange-500 uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">3. 出生年月日 (西元) *</label>
+                  <input
+                    type="date"
+                    value={editBirthDate}
+                    onChange={(e) => setEditBirthDate(e.target.value)}
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">4. 身分證字號</label>
+                  <input
+                    type="text"
+                    value={editNationalId}
+                    onChange={(e) => setEditNationalId(e.target.value.toUpperCase())}
+                    placeholder="例如：A123456789 (出入境與保險查驗用)"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium focus:ring-2 focus:ring-orange-500 uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">7. 聯絡電話</label>
+                  <input
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="例如：0912-345-678"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-700 mb-1">6. 電子信箱</label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="例如：student@frc10114.org"
+                  className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-700 mb-1">5. 戶籍 / 通訊地址</label>
+                <input
+                  type="text"
+                  value={editAddress}
+                  onChange={(e) => setEditAddress(e.target.value)}
+                  placeholder="例如：新北市中和區錦和路xxx號"
+                  className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-orange-50/60 border border-orange-200 rounded-xl">
+                <div>
+                  <label className="block text-xs font-bold text-orange-900 mb-1">8. 監護人姓名</label>
+                  <input
+                    type="text"
+                    value={editGuardianName}
+                    onChange={(e) => setEditGuardianName(e.target.value)}
+                    placeholder="例如：林爸爸"
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-orange-900 mb-1">9. 監護人聯絡電話</label>
+                  <input
+                    type="tel"
+                    value={editGuardianPhone}
+                    onChange={(e) => setEditGuardianPhone(e.target.value)}
+                    placeholder="例如：0988-111-222"
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
+                <button
+                  type="button"
+                  onClick={() => setIsEditProfileOpen(false)}
+                  className="px-4 py-2 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 rounded-lg text-xs font-medium cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>儲存更新</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

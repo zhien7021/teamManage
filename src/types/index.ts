@@ -21,6 +21,14 @@ export interface Member {
   avatar?: string; // Base64 Data URL or image path
   role?: 'admin' | 'member';
   password?: string;
+  // 新增個人詳細資料欄位
+  englishName?: string;     // 1. 常用英文名
+  passportName?: string;    // 2. 護照英文名
+  birthDate?: string;       // 3. 出生年月日（西元 YYYY-MM-DD）
+  nationalId?: string;      // 4. 身分證字號
+  address?: string;         // 5. 地址
+  guardianName?: string;    // 8. 監護人姓名
+  guardianPhone?: string;   // 9. 監護人電話
 }
 
 export interface FirebaseConfig {

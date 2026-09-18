@@ -14,6 +14,12 @@ import {
   Quote,
   Camera,
   Trash2,
+  Download,
+  Calendar,
+  MapPin,
+  Shield,
+  Globe,
+  FileText,
 } from 'lucide-react';
 import { Member, Department } from '../../types';
 import { UnsavedModal } from '../common/UnsavedModal';
@@ -54,10 +60,17 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
   const [newMemberForm, setNewMemberForm] = useState<Partial<Member>>({
     id: `10114-${String(members.length + 1).padStart(3, '0')}`,
     name: '',
+    englishName: '',
+    passportName: '',
+    birthDate: '',
+    nationalId: '',
     email: '',
     departments: ['機電整合組'],
     motto: '',
     phone: '',
+    address: '',
+    guardianName: '',
+    guardianPhone: '',
   });
 
   // Keep draft synchronized when active member changes
@@ -78,6 +91,13 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
         draftMember.id !== activeOriginal.id ||
         draftMember.email !== activeOriginal.email ||
         draftMember.phone !== (activeOriginal.phone || '') ||
+        (draftMember.englishName || '') !== (activeOriginal.englishName || '') ||
+        (draftMember.passportName || '') !== (activeOriginal.passportName || '') ||
+        (draftMember.birthDate || '') !== (activeOriginal.birthDate || '') ||
+        (draftMember.nationalId || '') !== (activeOriginal.nationalId || '') ||
+        (draftMember.address || '') !== (activeOriginal.address || '') ||
+        (draftMember.guardianName || '') !== (activeOriginal.guardianName || '') ||
+        (draftMember.guardianPhone || '') !== (activeOriginal.guardianPhone || '') ||
         draftMember.motto !== (activeOriginal.motto || '') ||
         (draftMember.avatar || '') !== (activeOriginal.avatar || '') ||
         draftMember.departments.length !== activeOriginal.departments.length ||
@@ -85,6 +105,62 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
           activeOriginal.departments.includes(d)
         ))
   );
+
+  // Export full member roster with all personal fields to CSV (Excel UTF-8 BOM)
+  const handleExportMembersList = () => {
+    const headers = [
+      '隊員編號 (學號)',
+      '姓名',
+      '常用英文名',
+      '護照英文名',
+      '出生年月日(西元)',
+      '身分證字號',
+      '電子郵件',
+      '聯絡電話',
+      '通訊地址',
+      '監護人姓名',
+      '監護人電話',
+      '所屬組別',
+      '座右銘'
+    ];
+    const rows = members.map((m) => [
+      m.id,
+      m.name,
+      m.englishName || '',
+      m.passportName || '',
+      m.birthDate || '',
+      m.nationalId || '',
+      m.email || '',
+      m.phone || '',
+      m.address || '',
+      m.guardianName || '',
+      m.guardianPhone || '',
+      m.departments.join('、'),
+      m.motto || '',
+    ]);
+
+    const csvContent =
+      '\uFEFF' +
+      [headers, ...rows]
+        .map((row) =>
+          row.map((cell) => `"${String(cell || '').replace(/"/g, '""')}"`).join(',')
+        )
+        .join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute(
+      'download',
+      `FRC10114_隊員完整名冊_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    onShowToast('匯出成功', `已順利下載 ${members.length} 位隊員完整資料 CSV 名冊`, 'success');
+  };
 
   // Handle dropdown switch with unsaved guard
   const handleSelectMember = (nextId: string) => {
@@ -189,10 +265,17 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
     const created: Member = {
       id: newMemberForm.id.trim(),
       name: newMemberForm.name.trim(),
+      englishName: newMemberForm.englishName?.trim() || '',
+      passportName: newMemberForm.passportName?.trim().toUpperCase() || '',
+      birthDate: newMemberForm.birthDate?.trim() || '',
+      nationalId: newMemberForm.nationalId?.trim().toUpperCase() || '',
       email: newMemberForm.email?.trim() || `${newMemberForm.id}@frc10114.org`,
       departments: newMemberForm.departments,
       motto: newMemberForm.motto || '熱愛機器人，追求卓越！',
       phone: newMemberForm.phone || '',
+      address: newMemberForm.address?.trim() || '',
+      guardianName: newMemberForm.guardianName?.trim() || '',
+      guardianPhone: newMemberForm.guardianPhone?.trim() || '',
     };
 
     onAddMember(created);
@@ -201,10 +284,17 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
     setNewMemberForm({
       id: `10114-${String(members.length + 2).padStart(3, '0')}`,
       name: '',
+      englishName: '',
+      passportName: '',
+      birthDate: '',
+      nationalId: '',
       email: '',
       departments: ['機電整合組'],
       motto: '',
       phone: '',
+      address: '',
+      guardianName: '',
+      guardianPhone: '',
     });
     onShowToast('隊員新增成功', `新隊員「${created.name}」已加入名冊`, 'success');
   };
@@ -228,13 +318,26 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors self-start md:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>新增隊員</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+          <button
+            type="button"
+            onClick={handleExportMembersList}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-orange-50 border border-orange-300 text-orange-700 font-bold text-xs rounded-lg shadow-2xs transition-colors cursor-pointer"
+            title="將全隊隊員基本資料、英文名、身分證、出生年月日、地址與監護人等完整資料匯出為 Excel / CSV 格式"
+          >
+            <Download className="w-4 h-4 text-orange-600" />
+            <span>匯出隊員資料 (CSV)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsAddModalOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>新增隊員</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Form & Member Switcher Layout */}
@@ -465,6 +568,74 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
                   />
                 </div>
 
+                {/* English Name */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <Globe className="w-3.5 h-3.5 text-orange-500" />
+                    <span>常用英文名</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.englishName || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, englishName: e.target.value })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
+                    placeholder="例如：Enxuan / Eric"
+                  />
+                </div>
+
+                {/* Passport Name */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <FileText className="w-3.5 h-3.5 text-orange-500" />
+                    <span>護照英文名 (大寫英文)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.passportName || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, passportName: e.target.value.toUpperCase() })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none uppercase"
+                    placeholder="例如：LIN, EN-XUAN"
+                  />
+                </div>
+
+                {/* Birth Date */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-orange-500" />
+                    <span>出生年月日 (西元)</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={draftMember.birthDate || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, birthDate: e.target.value })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* National ID */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <Shield className="w-3.5 h-3.5 text-orange-500" />
+                    <span>身分證字號</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.nationalId || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, nationalId: e.target.value.toUpperCase() })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-mono font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none uppercase"
+                    placeholder="例如：F234567890"
+                    maxLength={10}
+                  />
+                </div>
+
                 {/* Email */}
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
@@ -486,13 +657,64 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
                     <Phone className="w-3.5 h-3.5 text-orange-500" />
-                    <span>緊急聯絡電話</span>
+                    <span>隊員聯絡電話</span>
                   </label>
                   <input
                     type="text"
                     value={draftMember.phone || ''}
                     onChange={(e) =>
                       setDraftMember({ ...draftMember, phone: e.target.value })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
+                    placeholder="例如：0912-345-678"
+                  />
+                </div>
+
+                {/* Address */}
+                <div className="sm:col-span-2">
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-orange-500" />
+                    <span>通訊地址</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.address || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, address: e.target.value })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
+                    placeholder="例如：新北市中和區錦和路xxx號"
+                  />
+                </div>
+
+                {/* Guardian Name */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <User className="w-3.5 h-3.5 text-orange-500" />
+                    <span>監護人姓名</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.guardianName || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, guardianName: e.target.value })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
+                    placeholder="例如：林爸爸"
+                  />
+                </div>
+
+                {/* Guardian Phone */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <Phone className="w-3.5 h-3.5 text-orange-500" />
+                    <span>監護人電話</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.guardianPhone || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, guardianPhone: e.target.value })
                     }
                     className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
                     placeholder="例如：0988-111-222"
@@ -651,19 +873,66 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-zinc-700 mb-1">
-                  電子郵件 (Email)
-                </label>
-                <input
-                  type="email"
-                  value={newMemberForm.email}
-                  onChange={(e) =>
-                    setNewMemberForm({ ...newMemberForm, email: e.target.value })
-                  }
-                  placeholder="例: student@frc10114.org"
-                  className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">
+                    常用英文名
+                  </label>
+                  <input
+                    type="text"
+                    value={newMemberForm.englishName || ''}
+                    onChange={(e) =>
+                      setNewMemberForm({ ...newMemberForm, englishName: e.target.value })
+                    }
+                    placeholder="例: Eric"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">
+                    護照英文名
+                  </label>
+                  <input
+                    type="text"
+                    value={newMemberForm.passportName || ''}
+                    onChange={(e) =>
+                      setNewMemberForm({ ...newMemberForm, passportName: e.target.value.toUpperCase() })
+                    }
+                    placeholder="例: LEE, MING-HAN"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900 uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">
+                    電子郵件 (Email)
+                  </label>
+                  <input
+                    type="email"
+                    value={newMemberForm.email}
+                    onChange={(e) =>
+                      setNewMemberForm({ ...newMemberForm, email: e.target.value })
+                    }
+                    placeholder="例: student@frc10114.org"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">
+                    聯絡電話
+                  </label>
+                  <input
+                    type="text"
+                    value={newMemberForm.phone || ''}
+                    onChange={(e) =>
+                      setNewMemberForm({ ...newMemberForm, phone: e.target.value })
+                    }
+                    placeholder="例: 0912-345-678"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900"
+                  />
+                </div>
               </div>
 
               <div>

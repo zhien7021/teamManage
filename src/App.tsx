@@ -476,6 +476,7 @@ export const App: React.FC = () => {
                     onUpdateMotto={handleUpdateMotto}
                     onUpdateAvatar={handleUpdateAvatar}
                     onRemoveAvatar={handleRemoveAvatar}
+                    onUpdateMember={handleUpdateMember}
                     onShowToast={showToast}
                   />
                 )}
