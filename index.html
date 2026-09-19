@@ -93,6 +93,8 @@
         {
           id: '10114-001',
           name: '管理員教練 (Coach Hsu)',
+          className: '科技中心',
+          seatNumber: '01',
           email: 'coach@frc10114.org',
           departments: ['機電整合組', '程式控制組', '行銷管理組'],
           motto: '培育卓越工程師，傳承 10114 堅持不懈的機器人精神！',
@@ -110,6 +112,8 @@
         {
           id: '10114-002',
           name: '林恩萱',
+          className: '高二1班',
+          seatNumber: '08',
           email: 'enxuan.lin@frc10114.org',
           departments: ['程式控制組', '機電整合組'],
           motto: '堅持熱愛，讓一行行程式與機構在賽場上精準綻放！',
@@ -127,6 +131,8 @@
         {
           id: '10114-008',
           name: '王小明',
+          className: '高二3班',
+          seatNumber: '15',
           email: 'xiaoming.wang@frc10114.org',
           departments: ['機電整合組'],
           motto: '結構穩定是一切的基石，一顆螺絲都不能鬆動！',
@@ -144,6 +150,8 @@
         {
           id: '10114-012',
           name: '陳大明',
+          className: '高二2班',
+          seatNumber: '21',
           email: 'daming.chen@frc10114.org',
           departments: ['程式控制組'],
           motto: '挑戰極致演算法，寫出全場最流暢的自主移動軌跡。',
@@ -161,6 +169,8 @@
         {
           id: '10114-015',
           name: '張詠晴',
+          className: '高一1班',
+          seatNumber: '05',
           email: 'yongqing.zhang@frc10114.org',
           departments: ['行銷管理組'],
           motto: '傳遞科技熱情，讓世界聽見新北錦和 10114 的熱血故事。',
@@ -178,6 +188,8 @@
         {
           id: '10114-018',
           name: '廖子涵',
+          className: '高二5班',
+          seatNumber: '12',
           email: 'zihan.liao@frc10114.org',
           departments: ['機電整合組', '行銷管理組'],
           motto: '工廠加工與企業公關雙修，做最全面的 FIRST 創作者！',
@@ -1354,6 +1366,8 @@
             draftMember.name !== originalMember.name ||
             draftMember.id !== originalMember.id ||
             draftMember.email !== originalMember.email ||
+            (draftMember.className || '') !== (originalMember.className || '') ||
+            (draftMember.seatNumber || '') !== (originalMember.seatNumber || '') ||
             (draftMember.motto || '') !== (originalMember.motto || '') ||
             (draftMember.phone || '') !== (originalMember.phone || '') ||
             (draftMember.avatar || '') !== (originalMember.avatar || '') ||
@@ -1848,6 +1862,8 @@
           const headers = [
             '隊員編號 (學號)',
             '姓名',
+            '班級',
+            '座號',
             '常用英文名',
             '護照英文名',
             '出生年月日 (西元)',
@@ -1864,6 +1880,8 @@
           const rows = sortedMembers.map(m => [
             m.id || '',
             m.name || '',
+            m.className || '',
+            m.seatNumber || '',
             m.englishName || '',
             m.passportName || '',
             m.birthDate || '',
@@ -2373,6 +2391,8 @@
                           const newM = {
                             id: newId,
                             name: '新進隊員',
+                            className: '',
+                            seatNumber: '',
                             email: `${newId}@frc10114.org`,
                             departments: ['機電整合組'],
                             motto: '熱愛工程，追求突破！',
@@ -2642,6 +2662,26 @@
                                 value={draftMember.id}
                                 onChange={(e) => setDraftMember({ ...draftMember, id: e.target.value })}
                                 className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">班級</label>
+                              <input
+                                type="text"
+                                value={draftMember.className || ''}
+                                onChange={(e) => setDraftMember({ ...draftMember, className: e.target.value })}
+                                placeholder="例如：201班 / 高二1班"
+                                className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-zinc-700 mb-1">座號</label>
+                              <input
+                                type="text"
+                                value={draftMember.seatNumber || ''}
+                                onChange={(e) => setDraftMember({ ...draftMember, seatNumber: e.target.value })}
+                                placeholder="例如：08 / 15"
+                                className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                               />
                             </div>
                             <div>
@@ -7855,6 +7895,8 @@
         // Edit Profile modal state
         const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
         const [editName, setEditName] = useState(member.name || '');
+        const [editClassName, setEditClassName] = useState(member.className || '');
+        const [editSeatNumber, setEditSeatNumber] = useState(member.seatNumber || '');
         const [editPhone, setEditPhone] = useState(member.phone || '');
         const [editEmail, setEditEmail] = useState(member.email || '');
         const [editMotto, setEditMotto] = useState(member.motto || '');
@@ -7869,6 +7911,8 @@
 
         useEffect(() => {
           setEditName(member.name || '');
+          setEditClassName(member.className || '');
+          setEditSeatNumber(member.seatNumber || '');
           setEditPhone(member.phone || '');
           setEditEmail(member.email || '');
           setEditMotto(member.motto || '');
@@ -7881,7 +7925,7 @@
           setEditGuardianName(member.guardianName || '');
           setEditGuardianPhone(member.guardianPhone || '');
         }, [
-          member.id, member.name, member.phone, member.email, member.motto, member.departments,
+          member.id, member.name, member.className, member.seatNumber, member.phone, member.email, member.motto, member.departments,
           member.englishName, member.passportName, member.birthDate, member.nationalId,
           member.address, member.guardianName, member.guardianPhone
         ]);
@@ -7911,6 +7955,8 @@
             const ok = onUpdateProfile({
               id: member.id,
               name: editName.trim(),
+              className: editClassName.trim(),
+              seatNumber: editSeatNumber.trim(),
               phone: editPhone.trim(),
               email: editEmail.trim(),
               motto: editMotto.trim(),
@@ -8096,6 +8142,13 @@
                     <span className="font-mono text-xs font-bold px-2 py-0.5 bg-zinc-900 text-white rounded">
                       {member.id}
                     </span>
+                    {(member.className || member.seatNumber) && (
+                      <span className="font-bold text-xs px-2.5 py-0.5 bg-orange-50 text-orange-800 border border-orange-200 rounded">
+                        {member.className ? member.className : ''}
+                        {member.className && member.seatNumber ? ' · ' : ''}
+                        {member.seatNumber ? `${member.seatNumber}號` : ''}
+                      </span>
+                    )}
                     {member.role === 'admin' && (
                       <span className="px-2 py-0.5 text-xs font-bold bg-orange-100 text-orange-700 rounded-full border border-orange-300 flex items-center gap-1">
                         <Icon name="shieldCheck" className="w-3.5 h-3.5" />
@@ -8326,6 +8379,16 @@
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">班級</span>
+                  <p className="font-bold text-zinc-900 text-sm">{member.className || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+                  <span className="text-[11px] font-bold text-zinc-400">座號</span>
+                  <p className="font-bold text-zinc-900 text-sm">{member.seatNumber || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+                </div>
+
                 <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
                   <span className="text-[11px] font-bold text-zinc-400">1. 常用英文名</span>
                   <p className="font-bold text-zinc-900 text-sm">{member.englishName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
@@ -8653,7 +8716,7 @@
                   </div>
 
                   <form onSubmit={handleSaveProfileForm} className="space-y-4">
-                    {/* 基本身分與英文姓名 */}
+                    {/* 基本身分與班級座號 */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-xs font-bold text-zinc-700 mb-1">姓名 *</label>
@@ -8673,6 +8736,26 @@
                           value={editEnglishName}
                           onChange={(e) => setEditEnglishName(e.target.value)}
                           placeholder="例如：Alex / Eric / David"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">班級</label>
+                        <input
+                          type="text"
+                          value={editClassName}
+                          onChange={(e) => setEditClassName(e.target.value)}
+                          placeholder="例如：201班 / 高二1班"
+                          className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">座號</label>
+                        <input
+                          type="text"
+                          value={editSeatNumber}
+                          onChange={(e) => setEditSeatNumber(e.target.value)}
+                          placeholder="例如：08 / 15"
                           className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                         />
                       </div>
@@ -10378,6 +10461,8 @@
             [
               '隊員編號 (學號)',
               '姓名',
+              '班級',
+              '座號',
               '常用英文名',
               '護照英文名',
               '出生年月日 (西元)',
@@ -10394,6 +10479,8 @@
             members.map(m => [
               m.id || '',
               m.name || '',
+              m.className || '',
+              m.seatNumber || '',
               m.englishName || '',
               m.passportName || '',
               m.birthDate || '',

@@ -20,6 +20,7 @@ import {
   Shield,
   Globe,
   FileText,
+  GraduationCap,
 } from 'lucide-react';
 import { Member, Department } from '../../types';
 import { UnsavedModal } from '../common/UnsavedModal';
@@ -60,6 +61,8 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
   const [newMemberForm, setNewMemberForm] = useState<Partial<Member>>({
     id: `10114-${String(members.length + 1).padStart(3, '0')}`,
     name: '',
+    className: '',
+    seatNumber: '',
     englishName: '',
     passportName: '',
     birthDate: '',
@@ -91,6 +94,8 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
         draftMember.id !== activeOriginal.id ||
         draftMember.email !== activeOriginal.email ||
         draftMember.phone !== (activeOriginal.phone || '') ||
+        (draftMember.className || '') !== (activeOriginal.className || '') ||
+        (draftMember.seatNumber || '') !== (activeOriginal.seatNumber || '') ||
         (draftMember.englishName || '') !== (activeOriginal.englishName || '') ||
         (draftMember.passportName || '') !== (activeOriginal.passportName || '') ||
         (draftMember.birthDate || '') !== (activeOriginal.birthDate || '') ||
@@ -111,6 +116,8 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
     const headers = [
       '隊員編號 (學號)',
       '姓名',
+      '班級',
+      '座號',
       '常用英文名',
       '護照英文名',
       '出生年月日(西元)',
@@ -126,6 +133,8 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
     const rows = members.map((m) => [
       m.id,
       m.name,
+      m.className || '',
+      m.seatNumber || '',
       m.englishName || '',
       m.passportName || '',
       m.birthDate || '',
@@ -265,6 +274,8 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
     const created: Member = {
       id: newMemberForm.id.trim(),
       name: newMemberForm.name.trim(),
+      className: newMemberForm.className?.trim() || '',
+      seatNumber: newMemberForm.seatNumber?.trim() || '',
       englishName: newMemberForm.englishName?.trim() || '',
       passportName: newMemberForm.passportName?.trim().toUpperCase() || '',
       birthDate: newMemberForm.birthDate?.trim() || '',
@@ -284,6 +295,8 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
     setNewMemberForm({
       id: `10114-${String(members.length + 2).padStart(3, '0')}`,
       name: '',
+      className: '',
+      seatNumber: '',
       englishName: '',
       passportName: '',
       birthDate: '',
@@ -565,6 +578,40 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
                     }
                     className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-mono font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
                     placeholder="例如：10114-002"
+                  />
+                </div>
+
+                {/* Class */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <GraduationCap className="w-3.5 h-3.5 text-orange-500" />
+                    <span>班級</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.className || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, className: e.target.value })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
+                    placeholder="例如：201班 / 高二1班"
+                  />
+                </div>
+
+                {/* Seat Number */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <Hash className="w-3.5 h-3.5 text-orange-500" />
+                    <span>座號</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draftMember.seatNumber || ''}
+                    onChange={(e) =>
+                      setDraftMember({ ...draftMember, seatNumber: e.target.value })
+                    }
+                    className="w-full p-2.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none"
+                    placeholder="例如：08 / 15"
                   />
                 </div>
 
@@ -869,6 +916,37 @@ export const MemberManagement: React.FC<MemberManagementProps> = ({
                     }
                     placeholder="例: 10114-025"
                     className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">
+                    班級
+                  </label>
+                  <input
+                    type="text"
+                    value={newMemberForm.className || ''}
+                    onChange={(e) =>
+                      setNewMemberForm({ ...newMemberForm, className: e.target.value })
+                    }
+                    placeholder="例: 201班 / 高二1班"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">
+                    座號
+                  </label>
+                  <input
+                    type="text"
+                    value={newMemberForm.seatNumber || ''}
+                    onChange={(e) =>
+                      setNewMemberForm({ ...newMemberForm, seatNumber: e.target.value })
+                    }
+                    placeholder="例: 08 / 15"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-sm text-zinc-900"
                   />
                 </div>
               </div>

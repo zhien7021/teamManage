@@ -14,6 +14,8 @@ export type EventType =
 export interface Member {
   id: string;
   name: string;
+  className?: string;       // 班級 (例如: 201班 / 高二1班)
+  seatNumber?: string;      // 座號 (例如: 08 / 15)
   email: string;
   departments: Department[];
   motto?: string;

@@ -47,6 +47,8 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
   // Profile fields state & modal
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [editName, setEditName] = useState(member.name || '');
+  const [editClassName, setEditClassName] = useState(member.className || '');
+  const [editSeatNumber, setEditSeatNumber] = useState(member.seatNumber || '');
   const [editEnglishName, setEditEnglishName] = useState(member.englishName || '');
   const [editPassportName, setEditPassportName] = useState(member.passportName || '');
   const [editBirthDate, setEditBirthDate] = useState(member.birthDate || '');
@@ -59,6 +61,8 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
 
   useEffect(() => {
     setEditName(member.name || '');
+    setEditClassName(member.className || '');
+    setEditSeatNumber(member.seatNumber || '');
     setEditEnglishName(member.englishName || '');
     setEditPassportName(member.passportName || '');
     setEditBirthDate(member.birthDate || '');
@@ -76,6 +80,8 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
     const updated: Member = {
       ...member,
       name: editName.trim() || member.name,
+      className: editClassName.trim(),
+      seatNumber: editSeatNumber.trim(),
       englishName: editEnglishName.trim(),
       passportName: editPassportName.trim().toUpperCase(),
       birthDate: editBirthDate.trim(),
@@ -205,6 +211,13 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
                 <span className="font-mono text-xs font-bold px-2.5 py-0.5 bg-zinc-900 text-white rounded-md">
                   {member.id}
                 </span>
+                {(member.className || member.seatNumber) && (
+                  <span className="font-bold text-xs px-2.5 py-0.5 bg-orange-50 text-orange-800 border border-orange-200 rounded-md">
+                    {member.className ? member.className : ''}
+                    {member.className && member.seatNumber ? ' · ' : ''}
+                    {member.seatNumber ? `${member.seatNumber}號` : ''}
+                  </span>
+                )}
                 <span className="text-xs px-2.5 py-0.5 bg-orange-50 text-orange-600 border border-orange-200 font-semibold rounded-md">
                   FRC 10114 隊員
                 </span>
@@ -303,6 +316,16 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">班級</span>
+            <p className="font-bold text-zinc-900 text-sm">{member.className || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
+          <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
+            <span className="text-[11px] font-bold text-zinc-400">座號</span>
+            <p className="font-bold text-zinc-900 text-sm">{member.seatNumber || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
+          </div>
+
           <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-1">
             <span className="text-[11px] font-bold text-zinc-400">1. 常用英文名</span>
             <p className="font-bold text-zinc-900 text-sm">{member.englishName || <span className="text-zinc-400 font-normal italic">尚未填寫</span>}</p>
@@ -533,6 +556,26 @@ export const MemberProfile: React.FC<MemberProfileProps> = ({
                     value={editEnglishName}
                     onChange={(e) => setEditEnglishName(e.target.value)}
                     placeholder="例如：Alex / Eric / David"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">班級</label>
+                  <input
+                    type="text"
+                    value={editClassName}
+                    onChange={(e) => setEditClassName(e.target.value)}
+                    placeholder="例如：201班 / 高二1班"
+                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 mb-1">座號</label>
+                  <input
+                    type="text"
+                    value={editSeatNumber}
+                    onChange={(e) => setEditSeatNumber(e.target.value)}
+                    placeholder="例如：08 / 15"
                     className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                   />
                 </div>

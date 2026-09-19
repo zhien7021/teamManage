@@ -14,6 +14,8 @@ export const INITIAL_MEMBERS: Member[] = [
   {
     id: '10114-001',
     name: '管理員教練 (Coach Hsu)',
+    className: '科技中心',
+    seatNumber: '01',
     email: 'coach@frc10114.org',
     departments: ['機電整合組', '程式控制組', '行銷管理組'],
     motto: '培育卓越工程師，傳承 10114 堅持不懈的機器人精神！',
@@ -31,6 +33,8 @@ export const INITIAL_MEMBERS: Member[] = [
   {
     id: '10114-002',
     name: '林恩萱',
+    className: '高二1班',
+    seatNumber: '08',
     email: 'enxuan.lin@frc10114.org',
     departments: ['程式控制組', '機電整合組'],
     motto: '堅持熱愛，讓一行行程式與機構在賽場上精準綻放！',
@@ -48,6 +52,8 @@ export const INITIAL_MEMBERS: Member[] = [
   {
     id: '10114-008',
     name: '王小明',
+    className: '高二3班',
+    seatNumber: '15',
     email: 'xiaoming.wang@frc10114.org',
     departments: ['機電整合組'],
     motto: '結構穩定是一切的基石，一顆螺絲都不能鬆動！',
@@ -65,6 +71,8 @@ export const INITIAL_MEMBERS: Member[] = [
   {
     id: '10114-012',
     name: '陳大明',
+    className: '高二2班',
+    seatNumber: '21',
     email: 'daming.chen@frc10114.org',
     departments: ['程式控制組'],
     motto: '挑戰極致演算法，寫出全場最流暢的自主移動軌跡。',
@@ -82,6 +90,8 @@ export const INITIAL_MEMBERS: Member[] = [
   {
     id: '10114-015',
     name: '張詠晴',
+    className: '高一1班',
+    seatNumber: '05',
     email: 'yongqing.zhang@frc10114.org',
     departments: ['行銷管理組'],
     motto: '傳遞科技熱情，讓世界聽見新北錦和 10114 的熱血故事。',
@@ -99,6 +109,8 @@ export const INITIAL_MEMBERS: Member[] = [
   {
     id: '10114-018',
     name: '廖子涵',
+    className: '高二5班',
+    seatNumber: '12',
     email: 'zihan.liao@frc10114.org',
     departments: ['機電整合組', '行銷管理組'],
     motto: '工廠加工與企業公關雙修，做最全面的 FIRST 創作者！',
