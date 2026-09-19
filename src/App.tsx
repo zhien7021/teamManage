@@ -216,6 +216,12 @@ export const App: React.FC = () => {
     setEvents((prev) => prev.filter((e) => e.id !== id));
   };
 
+  const handleUpdateEvent = (updatedEv: TeamEvent) => {
+    setEvents((prev) =>
+      prev.map((e) => (e.id === updatedEv.id ? { ...e, ...updatedEv } : e))
+    );
+  };
+
   const handleVerifyTask = (taskId: number | string, verifiedBy: string) => {
     const now = new Date();
     const yyyy = now.getFullYear();
@@ -429,7 +435,9 @@ export const App: React.FC = () => {
                 {activeTab === 'calendar' && (
                   <AdminCalendar
                     events={events}
+                    members={members}
                     onAddEvent={handleAddEvent}
+                    onUpdateEvent={handleUpdateEvent}
                     onDeleteEvent={handleDeleteEvent}
                     onShowToast={showToast}
                   />
@@ -484,8 +492,10 @@ export const App: React.FC = () => {
                   <MemberCalendar
                     events={events}
                     member={currentMember}
+                    members={members}
                     customSavedEventIds={customSavedEventIds}
                     onToggleSaveEvent={handleToggleBookmarkEvent}
+                    onUpdateEvent={handleUpdateEvent}
                     onShowToast={showToast}
                   />
                 )}

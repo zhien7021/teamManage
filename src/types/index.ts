@@ -42,6 +42,16 @@ export interface FirebaseConfig {
   appId?: string;
 }
 
+export interface EventAttendee {
+  studentId: string;
+  studentName: string;
+  signedUpAt: string; // YYYY-MM-DD HH:mm
+  className?: string; // 班級 (例如: 106 / 201)
+  seatNumber?: string; // 座號 (例如: 05 / 16)
+  department?: string; // 組別
+  note?: string;
+}
+
 export interface TeamEvent {
   id: number | string;
   name: string;
@@ -52,6 +62,8 @@ export interface TeamEvent {
   departments: Department[];
   description?: string;
   location?: string;
+  allowRegistration?: boolean; // 是否開啟投票參加
+  attendees?: EventAttendee[]; // 報名人員名冊
 }
 
 export interface LearningTask {

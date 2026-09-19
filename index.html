@@ -524,6 +524,41 @@
           startTime: '14:00',
           endTime: '16:00',
           departments: ['機電整合組', '程式控制組', '行銷管理組'],
+          allowRegistration: true,
+          attendees: [
+            {
+              studentId: '10114-020',
+              studentName: '汪宥同',
+              className: '106',
+              seatNumber: '16',
+              department: '機電整合組',
+              signedUpAt: '2026-09-18 10:20',
+            },
+            {
+              studentId: '10114-021',
+              studentName: '林思佑',
+              className: '302',
+              seatNumber: '08',
+              department: '程式控制組',
+              signedUpAt: '2026-09-18 11:15',
+            },
+            {
+              studentId: '10114-022',
+              studentName: '彭曼唯',
+              className: '108',
+              seatNumber: '25',
+              department: '行銷管理組',
+              signedUpAt: '2026-09-18 14:05',
+            },
+            {
+              studentId: '10114-024',
+              studentName: '陳雩',
+              className: '201',
+              seatNumber: '11',
+              department: '機電整合組',
+              signedUpAt: '2026-09-18 16:30',
+            },
+          ],
           description: '審查各組本週進度甘特圖，落實工作坊護目鏡佩戴與火花機具安全規範。',
           location: '階梯教室 101',
         },
@@ -535,6 +570,33 @@
           startTime: '13:30',
           endTime: '17:00',
           departments: ['機電整合組', '程式控制組', '行銷管理組'],
+          allowRegistration: true,
+          attendees: [
+            {
+              studentId: '10114-020',
+              studentName: '汪宥同',
+              className: '106',
+              seatNumber: '16',
+              department: '機電整合組',
+              signedUpAt: '2026-09-19 08:30',
+            },
+            {
+              studentId: '10114-023',
+              studentName: '王璿榕',
+              className: '105',
+              seatNumber: '03',
+              department: '行銷管理組',
+              signedUpAt: '2026-09-19 09:10',
+            },
+            {
+              studentId: '10114-025',
+              studentName: '楊詠任',
+              className: '205',
+              seatNumber: '32',
+              department: '程式控制組',
+              signedUpAt: '2026-09-19 09:45',
+            },
+          ],
           description: '推廣 STEM 教育，帶領學弟妹體驗 MARC 訓練機器人手動遙控操控。',
           location: '錦和國中體育館',
         },
@@ -1072,7 +1134,9 @@
           fileSpreadsheet: <g><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></g>,
           copy: <g><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g>,
           externalLink: <g><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></g>,
-          send: <g><line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></g>
+          send: <g><line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></g>,
+          userPlus: <g><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></g>,
+          userCheck: <g><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></g>
         };
         return (
           <svg
@@ -3120,6 +3184,8 @@
               {currentRole === 'admin' && activeTab === 'calendar' && (
                 <AdminCalendarTab
                   events={sortedEvents}
+                  members={members}
+                  onShowToast={showToast}
                   onAddEvent={(ev) => {
                     const newEv = { ...ev, id: Date.now() };
                     const next = [...events, newEv];
@@ -3269,7 +3335,15 @@
                 <MemberCalendarTab
                   events={sortedEvents}
                   member={currentMember}
+                  members={members}
                   savedIds={customSavedEventIds}
+                  onShowToast={showToast}
+                  onUpdateEvent={(updatedEv) => {
+                    const next = events.map(e => e.id === updatedEv.id ? { ...e, ...updatedEv } : e);
+                    setEvents(next);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ events: next });
+                  }}
                   onToggleSave={(eventId, eventName) => {
                     const exists = customSavedEventIds.includes(eventId);
                     const next = exists ? customSavedEventIds.filter(x => x !== eventId) : [...customSavedEventIds, eventId];
@@ -3349,7 +3423,15 @@
                 <MemberCalendarTab
                   events={sortedEvents}
                   member={matchedParentStudent}
+                  members={members}
                   savedIds={customSavedEventIds}
+                  onShowToast={showToast}
+                  onUpdateEvent={(updatedEv) => {
+                    const next = events.map(e => e.id === updatedEv.id ? { ...e, ...updatedEv } : e);
+                    setEvents(next);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ events: next });
+                  }}
                   onToggleSave={(eventId, eventName) => {
                     const exists = customSavedEventIds.includes(eventId);
                     const next = exists ? customSavedEventIds.filter(x => x !== eventId) : [...customSavedEventIds, eventId];
@@ -5563,13 +5645,17 @@
       }
 
       // --- 5.2 ADMIN CALENDAR TAB WITH SUB-CATEGORIES (活動表 & 月行事曆) ---
-      function AdminCalendarTab({ events, onAddEvent, onUpdateEvent, onDeleteEvent }) {
-        const [subTab, setSubTab] = useState('list'); // 'list' | 'month'
+      function AdminCalendarTab({ events, members = [], onAddEvent, onUpdateEvent, onDeleteEvent, onShowToast }) {
+        const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey'
         const [isAddOpen, setIsAddOpen] = useState(false);
         const [editingEvent, setEditingEvent] = useState(null);
         const [deptFilter, setDeptFilter] = useState('all');
         const [typeFilter, setTypeFilter] = useState('all');
         const [showPast, setShowPast] = useState(false);
+
+        // Survey State
+        const [manualAddEventId, setManualAddEventId] = useState(null);
+        const [selectedMemberId, setSelectedMemberId] = useState('');
 
         const [name, setName] = useState('');
         const [type, setType] = useState('機電整合組培訓');
@@ -5579,6 +5665,7 @@
         const [depts, setDepts] = useState(['機電整合組']);
         const [location, setLocation] = useState('科技中心');
         const [description, setDescription] = useState('');
+        const [allowRegistration, setAllowRegistration] = useState(false);
 
         const types = [
           '機電整合組培訓',
@@ -5601,6 +5688,7 @@
           setDepts(['機電整合組']);
           setLocation('科技中心');
           setDescription('');
+          setAllowRegistration(false);
           setIsAddOpen(true);
         };
 
@@ -5617,6 +5705,7 @@
           setDepts(normalizedDepts);
           setLocation(ev.location || '科技中心');
           setDescription(ev.description || '');
+          setAllowRegistration(!!ev.allowRegistration);
           setIsAddOpen(true);
         };
 
@@ -5657,6 +5746,8 @@
                 departments: normalizedDepts,
                 location,
                 description,
+                allowRegistration: !!allowRegistration,
+                attendees: editingEvent.attendees || [],
               });
             }
           } else {
@@ -5669,13 +5760,18 @@
               departments: normalizedDepts,
               location,
               description,
+              allowRegistration: !!allowRegistration,
+              attendees: [],
             });
           }
           setIsAddOpen(false);
           setEditingEvent(null);
           setName('');
           setDescription('');
+          setAllowRegistration(false);
         };
+
+        const surveyedEventsCount = events.filter(e => e.allowRegistration).length;
 
         return (
           <div className="space-y-6">
@@ -5688,17 +5784,17 @@
                 </div>
                 <h2 className="text-xl font-black text-zinc-900 tracking-tight">隊伍行事曆與公告設定</h2>
                 <p className="text-xs text-zinc-500 mt-1">
-                  支援切換「活動表」時序清單與「月行事曆」全月視圖，發布、編輯修正或刪除活動。
+                  支援切換「活動表」時序清單與「月行事曆」全月視圖，以及「活動參與人數調查」統計與名冊管理。
                 </p>
               </div>
 
               <div className="flex items-center gap-3 self-start md:self-auto flex-wrap">
-                {/* Two Sub-Categories Switcher: 1. 活動表 2. 月行事曆 */}
+                {/* Three Sub-Categories Switcher: 1. 活動表 2. 月行事曆 3. 活動參與人數調查 */}
                 <div className="flex items-center bg-zinc-100 p-1.5 rounded-xl border border-zinc-200 text-xs font-bold">
                   <button
                     type="button"
                     onClick={() => setSubTab('list')}
-                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all ${
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
                       subTab === 'list'
                         ? 'bg-zinc-900 text-white shadow-xs'
                         : 'text-zinc-600 hover:text-zinc-900'
@@ -5710,7 +5806,7 @@
                   <button
                     type="button"
                     onClick={() => setSubTab('month')}
-                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all ${
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
                       subTab === 'month'
                         ? 'bg-zinc-900 text-white shadow-xs'
                         : 'text-zinc-600 hover:text-zinc-900'
@@ -5718,6 +5814,23 @@
                   >
                     <Icon name="calendar" className="w-3.5 h-3.5 text-orange-400" />
                     <span>2. 月行事曆 (月曆)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubTab('survey')}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
+                      subTab === 'survey'
+                        ? 'bg-zinc-900 text-white shadow-xs'
+                        : 'text-zinc-600 hover:text-zinc-900'
+                    }`}
+                  >
+                    <Icon name="users" className="w-3.5 h-3.5 text-orange-400" />
+                    <span>3. 活動參與人數調查</span>
+                    {surveyedEventsCount > 0 && (
+                      <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-orange-600 text-white shadow-2xs">
+                        {surveyedEventsCount}
+                      </span>
+                    )}
                   </button>
                 </div>
 
@@ -5825,6 +5938,12 @@
                                 {d}
                               </span>
                             ))}
+                            {ev.allowRegistration && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-orange-100 text-orange-800 border border-orange-300 rounded-md flex items-center gap-1">
+                                <Icon name="users" className="w-3 h-3 text-orange-600" />
+                                <span>開啟調查 (已報名 {(ev.attendees || []).length} 人)</span>
+                              </span>
+                            )}
                           </div>
 
                           <h3 className="text-base font-extrabold text-zinc-900 tracking-tight">{ev.name}</h3>
@@ -5907,6 +6026,353 @@
                   onEditEvent={handleOpenEdit}
                   onOpenAddEvent={(prefilledDate) => handleOpenAdd(prefilledDate)}
                 />
+              </div>
+            )}
+
+            {/* Sub-Category 3: 活動參與人數調查 (管理員調查與名冊管理) */}
+            {subTab === 'survey' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                {/* Survey Summary Banner */}
+                <div className="bg-gradient-to-r from-orange-50/70 via-amber-50/50 to-white border border-orange-200 rounded-xl p-5 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-bold text-orange-700 mb-1">
+                        <Icon name="users" className="w-4 h-4 text-orange-600" />
+                        <span>活動參與意願與人數調查控管中心</span>
+                      </div>
+                      <p className="text-xs text-zinc-600">
+                        凡在發布或編輯活動時打勾「是否開啟投票參加」之活動將彙整於此。隊員可於學生端自主報名，管理員在此享有查看統計、名冊排序、手動新增與刪除隊員之完整編輯權限。
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="px-3.5 py-2 bg-white border border-orange-200 rounded-xl shadow-2xs text-center">
+                        <span className="text-[10px] text-zinc-500 font-bold block">進行中調查</span>
+                        <span className="text-lg font-black text-orange-600">
+                          {events.filter(e => e.allowRegistration).length}
+                        </span>
+                      </div>
+                      <div className="px-3.5 py-2 bg-white border border-orange-200 rounded-xl shadow-2xs text-center">
+                        <span className="text-[10px] text-zinc-500 font-bold block">累計報名人次</span>
+                        <span className="text-lg font-black text-zinc-900">
+                          {events.filter(e => e.allowRegistration).reduce((sum, ev) => sum + (ev.attendees ? ev.attendees.length : 0), 0)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Survey Events List */}
+                <div className="space-y-5">
+                  {events.filter(e => e.allowRegistration).map(ev => {
+                    const attendees = ev.attendees || [];
+                    // Sort attendees by class, seatNumber, then name
+                    const sortedAttendees = [...attendees].sort((a, b) => {
+                      const classA = String(a.className || '').replace(/\D/g, '');
+                      const classB = String(b.className || '').replace(/\D/g, '');
+                      if (classA && classB && classA !== classB) {
+                        return parseInt(classA, 10) - parseInt(classB, 10);
+                      }
+                      const seatA = parseInt(String(a.seatNumber || '0').replace(/\D/g, ''), 10);
+                      const seatB = parseInt(String(b.seatNumber || '0').replace(/\D/g, ''), 10);
+                      if (seatA !== seatB) return seatA - seatB;
+                      return (a.studentName || '').localeCompare(b.studentName || '');
+                    });
+
+                    const isAddingToThis = manualAddEventId === ev.id;
+                    const availableMembers = members.filter(
+                      m => !attendees.some(a => a.studentId === m.id || a.studentName === m.name)
+                    );
+
+                    return (
+                      <div key={ev.id} className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden transition-all hover:border-orange-300">
+                        {/* Event Card Header */}
+                        <div className="p-5 border-b border-zinc-100 bg-zinc-50/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="space-y-1.5 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
+                                {ev.type}
+                              </span>
+                              {(ev.departments || []).map(d => (
+                                <span key={d} className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-700 rounded-md border border-zinc-200">
+                                  {d}
+                                </span>
+                              ))}
+                              <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                                <Icon name="users" className="w-3.5 h-3.5" />
+                                <span>已報名：{sortedAttendees.length} 人</span>
+                              </span>
+                            </div>
+
+                            <h3 className="text-lg font-black text-zinc-900 tracking-tight">{ev.name}</h3>
+
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600">
+                              <span className="font-bold text-zinc-900 flex items-center gap-1">
+                                <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
+                                {ev.date}
+                              </span>
+                              <span className="font-mono flex items-center gap-1">
+                                <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
+                                {ev.startTime} - {ev.endTime}
+                              </span>
+                              {ev.location && (
+                                <span className="text-zinc-500 flex items-center gap-1">
+                                  <Icon name="mapPin" className="w-3.5 h-3.5 text-zinc-400" />
+                                  {ev.location}
+                                </span>
+                              )}
+                            </div>
+
+                            {ev.description && <p className="text-xs text-zinc-500 pt-0.5">{ev.description}</p>}
+                          </div>
+
+                          {/* Event Action Buttons */}
+                          <div className="flex items-center gap-2 flex-wrap self-start md:self-center shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setManualAddEventId(isAddingToThis ? null : ev.id);
+                                setSelectedMemberId('');
+                              }}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-2xs cursor-pointer ${
+                                isAddingToThis
+                                  ? 'bg-zinc-800 text-white'
+                                  : 'bg-orange-600 hover:bg-orange-700 text-white'
+                              }`}
+                            >
+                              <Icon name="userPlus" className="w-3.5 h-3.5" />
+                              <span>{isAddingToThis ? '關閉新增' : '手動新增人員'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const listStr = sortedAttendees.length > 0
+                                  ? sortedAttendees.map((a, idx) => `${idx + 1}. [${a.className || '無班級'}${a.seatNumber ? `-${a.seatNumber}號` : ''}] ${a.studentName} (${a.department || '隊員'})`).join('\n')
+                                  : '(尚無隊員報名)';
+                                const fullText = `📢 【${ev.name}】活動參與調查名冊\n📅 日期：${ev.date} ${ev.startTime}-${ev.endTime}\n📍 地點：${ev.location || '錦和高中創客基地'}\n👥 報名總人數：${sortedAttendees.length} 人\n\n名冊清單：\n${listStr}`;
+                                navigator.clipboard.writeText(fullText);
+                                if (onShowToast) onShowToast('已複製名冊', `「${ev.name}」參加人員名單已複製到剪貼簿`, 'success');
+                              }}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-200 transition-colors cursor-pointer"
+                              title="一鍵複製名冊通報文字"
+                            >
+                              <Icon name="copy" className="w-3.5 h-3.5" />
+                              <span>複製名冊</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                exportToCSV(
+                                  `FRC10114_${ev.name}_活動參加調查名冊_${getTodayDateStr()}.csv`,
+                                  ['序號', '學號', '班級', '座號', '姓名', '組別', '報名時間'],
+                                  sortedAttendees.map((a, idx) => [
+                                    idx + 1,
+                                    a.studentId,
+                                    a.className || '',
+                                    a.seatNumber || '',
+                                    a.studentName,
+                                    a.department || '',
+                                    a.signedUpAt || ''
+                                  ])
+                                );
+                              }}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-200 transition-colors cursor-pointer"
+                              title="匯出 CSV 試算表檔案"
+                            >
+                              <Icon name="download" className="w-3.5 h-3.5" />
+                              <span>匯出 CSV</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEdit(ev)}
+                              className="p-1.5 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
+                              title="編輯此活動設定"
+                            >
+                              <Icon name="edit" className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Manual Add Inline Selector Box */}
+                        {isAddingToThis && (
+                          <div className="p-4 bg-orange-50/70 border-b border-orange-200 animate-in fade-in duration-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex-1 flex flex-col sm:flex-row sm:items-center gap-2">
+                              <span className="text-xs font-bold text-zinc-800 shrink-0 flex items-center gap-1">
+                                <Icon name="plus" className="w-3.5 h-3.5 text-orange-600" />
+                                <span>選擇要手動加入的隊員：</span>
+                              </span>
+                              <select
+                                value={selectedMemberId}
+                                onChange={(e) => setSelectedMemberId(e.target.value)}
+                                className="flex-1 p-2 bg-white border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                              >
+                                <option value="">-- 請選擇學生名單 (共 {availableMembers.length} 位可加入) --</option>
+                                {availableMembers.map(m => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.className ? `[${m.className}${m.seatNumber ? `-${m.seatNumber}號` : ''}] ` : ''}{m.name} ({m.departments ? m.departments.join('、') : '隊員'})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-auto">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!selectedMemberId) {
+                                    if (onShowToast) onShowToast('請選擇隊員', '請先從下拉選單選取欲加入的學生', 'warning');
+                                    return;
+                                  }
+                                  const targetM = members.find(m => m.id === selectedMemberId);
+                                  if (!targetM) return;
+                                  const now = new Date();
+                                  const nowStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                                  const newAtt = {
+                                    studentId: targetM.id,
+                                    studentName: targetM.name,
+                                    className: targetM.className || '',
+                                    seatNumber: targetM.seatNumber || '',
+                                    department: (targetM.departments && targetM.departments[0]) || '隊員',
+                                    signedUpAt: nowStr,
+                                  };
+                                  const nextAttendees = [...attendees, newAtt];
+                                  if (onUpdateEvent) {
+                                    onUpdateEvent({ ...ev, attendees: nextAttendees });
+                                  }
+                                  setSelectedMemberId('');
+                                  setManualAddEventId(null);
+                                  if (onShowToast) onShowToast('已新增參加人員', `已將「${targetM.name}」加入「${ev.name}」名單`, 'success');
+                                }}
+                                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
+                              >
+                                確認加入名單
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setManualAddEventId(null); setSelectedMemberId(''); }}
+                                className="px-3 py-2 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-600 rounded-lg text-xs font-medium cursor-pointer"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Attendees Table */}
+                        <div className="p-4 sm:p-5">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-xs font-bold text-zinc-700 uppercase tracking-wider flex items-center gap-1.5">
+                              <Icon name="checkSquare" className="w-3.5 h-3.5 text-orange-500" />
+                              <span>已登記報名名冊（依班級與座號順序排列）</span>
+                            </h4>
+                            <span className="text-[11px] text-zinc-400">
+                              共 {sortedAttendees.length} 位預計參加
+                            </span>
+                          </div>
+
+                          {sortedAttendees.length === 0 ? (
+                            <div className="p-8 text-center bg-zinc-50 border border-dashed border-zinc-200 rounded-xl text-zinc-400">
+                              <Icon name="userCheck" className="w-8 h-8 mx-auto mb-2 text-zinc-300" />
+                              <p className="text-xs font-bold text-zinc-600">目前尚無隊員報名此活動</p>
+                              <p className="text-[11px] text-zinc-400 mt-1">
+                                隊員可於學生端「3. 活動參與人數調查」線上點選報名，亦可點擊上方「手動新增人員」直接指派。
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+                              <table className="w-full text-left text-xs">
+                                <thead className="bg-zinc-50 border-b border-zinc-200 text-zinc-600 font-bold text-[11px]">
+                                  <tr>
+                                    <th className="py-2.5 px-3.5 w-12 text-center">序號</th>
+                                    <th className="py-2.5 px-3">班級</th>
+                                    <th className="py-2.5 px-3">座號</th>
+                                    <th className="py-2.5 px-4">姓名</th>
+                                    <th className="py-2.5 px-4">所屬組別</th>
+                                    <th className="py-2.5 px-4">報名時間</th>
+                                    <th className="py-2.5 px-3.5 text-center">管理員操作</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-zinc-100 font-medium">
+                                  {sortedAttendees.map((att, idx) => (
+                                    <tr key={att.studentId || idx} className="hover:bg-orange-50/30 transition-colors">
+                                      <td className="py-2.5 px-3.5 text-center font-mono text-zinc-400 text-[11px]">
+                                        {idx + 1}
+                                      </td>
+                                      <td className="py-2.5 px-3">
+                                        <span className="font-bold text-zinc-800 bg-zinc-100 px-2 py-0.5 rounded text-[11px]">
+                                          {att.className || '未設定'}
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-3 font-mono text-zinc-600">
+                                        {att.seatNumber ? `${att.seatNumber} 號` : '-'}
+                                      </td>
+                                      <td className="py-2.5 px-4 font-bold text-zinc-900">
+                                        {att.studentName}
+                                      </td>
+                                      <td className="py-2.5 px-4 text-zinc-600">
+                                        <span className="text-[11px] px-2 py-0.5 rounded bg-zinc-50 border border-zinc-200">
+                                          {att.department || '隊員'}
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-4 font-mono text-zinc-400 text-[11px]">
+                                        {att.signedUpAt || '-'}
+                                      </td>
+                                      <td className="py-2.5 px-3.5 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (window.confirm(`確定要將「${att.studentName}」從「${ev.name}」參加名單中移除嗎？`)) {
+                                              const nextAttendees = attendees.filter(a => a.studentId !== att.studentId);
+                                              if (onUpdateEvent) {
+                                                onUpdateEvent({ ...ev, attendees: nextAttendees });
+                                              }
+                                              if (onShowToast) {
+                                                onShowToast('已移除名單', `已將「${att.studentName}」自「${ev.name}」移除`, 'info');
+                                              }
+                                            }
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-lg transition-colors cursor-pointer"
+                                          title="自此活動名單中移除"
+                                        >
+                                          <Icon name="trash" className="w-3.5 h-3.5" />
+                                          <span>移除</span>
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {events.filter(e => e.allowRegistration).length === 0 && (
+                    <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
+                      <Icon name="users" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
+                      <h3 className="text-base font-bold text-zinc-800">目前尚無開啟報名投票的活動</h3>
+                      <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-5">
+                        若您有近期需要統計隊員出席意願的培訓、競賽或推廣活動，請點擊下方按鈕發布新活動或於活動表編輯既有活動，並勾選「是否開啟投票參加」。
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleOpenAdd();
+                          setAllowRegistration(true);
+                        }}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Icon name="plus" className="w-4 h-4" />
+                        <span>發布新活動 (開啟人數調查)</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -6033,6 +6499,26 @@
                         placeholder="填寫活動細節、注意事項或準備事項"
                         className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
                       />
+                    </div>
+
+                    {/* 是否開啟投票參加（活動參與人數調查） */}
+                    <div className="p-3 bg-orange-50/80 border border-orange-200 rounded-xl flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="adminAllowReg"
+                        checked={allowRegistration}
+                        onChange={(e) => setAllowRegistration(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 text-orange-600 rounded border-zinc-300 focus:ring-orange-500 cursor-pointer"
+                      />
+                      <label htmlFor="adminAllowReg" className="text-xs cursor-pointer select-none">
+                        <span className="font-bold text-zinc-900 flex items-center gap-1.5">
+                          <span>是否開啟投票參加</span>
+                          <span className="text-[10px] bg-orange-200 text-orange-800 px-1.5 py-0.5 rounded-full font-bold">活動參與人數調查</span>
+                        </span>
+                        <span className="text-zinc-500 text-[11px] block mt-0.5 leading-relaxed">
+                          打勾時此活動將進入「3. 活動參與人數調查」列表，隊員可在學生端點選是否報名參加，管理員可統籌查看名冊與增刪名單。
+                        </span>
+                      </label>
                     </div>
 
                     <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
@@ -9588,10 +10074,11 @@
         );
       }
 
-      function MemberCalendarTab({ events, member, savedIds, onToggleSave }) {
-        const [subTab, setSubTab] = useState('list'); // 'list' | 'month'
+      function MemberCalendarTab({ events, member, members = [], savedIds = [], onToggleSave, onUpdateEvent, onShowToast }) {
+        const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey'
         const [view, setView] = useState('personal');
         const [showPast, setShowPast] = useState(false);
+        const [expandedEventId, setExpandedEventId] = useState(null);
         const todayStr = getTodayDateStr();
 
         const personalEvents = events.filter(e =>
@@ -9606,6 +10093,8 @@
         const pastEvents = baseEvents.filter(e => e.date < todayStr);
         const displayed = showPast ? baseEvents : upcomingEvents;
 
+        const surveyedEventsCount = events.filter(e => e.allowRegistration).length;
+
         return (
           <div className="space-y-6">
             <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -9616,17 +10105,17 @@
                 </div>
                 <h2 className="text-xl font-black text-zinc-900">隊伍與個人專屬行事曆</h2>
                 <p className="text-xs text-zinc-500 mt-1">
-                  個人行事曆預設列出「{member.departments.join('、')}」活動；支援切換「活動表」清單與「月行事曆」全月視圖！
+                  個人行事曆預設列出「{member.departments.join('、')}」活動；支援切換「活動表」清單、「月行事曆」全月視圖，以及「活動參與人數調查」線上報名！
                 </p>
               </div>
 
               <div className="flex items-center gap-2.5 flex-wrap self-start md:self-auto">
-                {/* Two Sub-Categories Switcher: 1. 活動表 2. 月行事曆 */}
+                {/* Three Sub-Categories Switcher: 1. 活動表 2. 月行事曆 3. 活動參與人數調查 */}
                 <div className="flex items-center bg-zinc-100 p-1.5 rounded-xl border border-zinc-200 text-xs font-bold">
                   <button
                     type="button"
                     onClick={() => setSubTab('list')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                       subTab === 'list'
                         ? 'bg-zinc-900 text-white shadow-xs'
                         : 'text-zinc-600 hover:text-zinc-900'
@@ -9638,7 +10127,7 @@
                   <button
                     type="button"
                     onClick={() => setSubTab('month')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                       subTab === 'month'
                         ? 'bg-zinc-900 text-white shadow-xs'
                         : 'text-zinc-600 hover:text-zinc-900'
@@ -9646,6 +10135,23 @@
                   >
                     <Icon name="calendar" className="w-3.5 h-3.5 text-orange-400" />
                     <span>2. 月行事曆 (月曆)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubTab('survey')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      subTab === 'survey'
+                        ? 'bg-zinc-900 text-white shadow-xs'
+                        : 'text-zinc-600 hover:text-zinc-900'
+                    }`}
+                  >
+                    <Icon name="users" className="w-3.5 h-3.5 text-orange-400" />
+                    <span>3. 活動參與人數調查</span>
+                    {surveyedEventsCount > 0 && (
+                      <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-orange-600 text-white shadow-2xs">
+                        {surveyedEventsCount}
+                      </span>
+                    )}
                   </button>
                 </div>
 
@@ -9728,6 +10234,12 @@
                                 ★ 個人自選收藏
                               </span>
                             )}
+                            {ev.allowRegistration && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-orange-100 text-orange-800 rounded border border-orange-300 flex items-center gap-1">
+                                <Icon name="users" className="w-3 h-3 text-orange-600" />
+                                <span>開放報名調查</span>
+                              </span>
+                            )}
                           </div>
 
                           <h3 className="text-base font-extrabold text-zinc-900">{ev.name}</h3>
@@ -9808,6 +10320,248 @@
                   onToggleSave={onToggleSave}
                   currentMember={member}
                 />
+              </div>
+            )}
+
+            {/* Sub-view 3: 活動參與人數調查 (隊員端點選報名) */}
+            {subTab === 'survey' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                {/* Survey Intro Banner */}
+                <div className="bg-gradient-to-r from-orange-50/70 via-amber-50/50 to-white border border-orange-200 rounded-xl p-5 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-bold text-orange-700 mb-1">
+                        <Icon name="users" className="w-4 h-4 text-orange-600" />
+                        <span>團隊活動參與投票與意願調查</span>
+                      </div>
+                      <p className="text-xs text-zinc-600">
+                        以下列出目前隊伍開放報名與人數調查的活動行程。點選「點選報名參加」即可即時登記您的出席意願，亦可隨時查閱同行隊員名冊！
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="px-3.5 py-2 bg-white border border-orange-200 rounded-xl shadow-2xs text-center">
+                        <span className="text-[10px] text-zinc-500 font-bold block">開放調查活動</span>
+                        <span className="text-lg font-black text-orange-600">
+                          {events.filter(e => e.allowRegistration).length}
+                        </span>
+                      </div>
+                      <div className="px-3.5 py-2 bg-white border border-orange-200 rounded-xl shadow-2xs text-center">
+                        <span className="text-[10px] text-zinc-500 font-bold block">您已報名</span>
+                        <span className="text-lg font-black text-emerald-600">
+                          {events.filter(e => e.allowRegistration && (e.attendees || []).some(a => a.studentId === member.id || a.studentName === member.name)).length}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Survey Events List */}
+                <div className="space-y-4">
+                  {events.filter(e => e.allowRegistration).map(ev => {
+                    const attendees = ev.attendees || [];
+                    const isRegistered = attendees.some(a => a.studentId === member.id || a.studentName === member.name);
+                    const myRegistration = attendees.find(a => a.studentId === member.id || a.studentName === member.name);
+                    const isExpanded = expandedEventId === ev.id;
+
+                    // Sort attendees by class, seatNumber, then name
+                    const sortedAttendees = [...attendees].sort((a, b) => {
+                      const classA = String(a.className || '').replace(/\D/g, '');
+                      const classB = String(b.className || '').replace(/\D/g, '');
+                      if (classA && classB && classA !== classB) {
+                        return parseInt(classA, 10) - parseInt(classB, 10);
+                      }
+                      const seatA = parseInt(String(a.seatNumber || '0').replace(/\D/g, ''), 10);
+                      const seatB = parseInt(String(b.seatNumber || '0').replace(/\D/g, ''), 10);
+                      if (seatA !== seatB) return seatA - seatB;
+                      return (a.studentName || '').localeCompare(b.studentName || '');
+                    });
+
+                    return (
+                      <div
+                        key={ev.id}
+                        className={`bg-white border rounded-2xl shadow-xs overflow-hidden transition-all ${
+                          isRegistered
+                            ? 'border-emerald-300 ring-1 ring-emerald-400/20'
+                            : 'border-zinc-200 hover:border-orange-300'
+                        }`}
+                      >
+                        <div className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="space-y-2 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
+                                {ev.type}
+                              </span>
+                              {(ev.departments || []).map(d => (
+                                <span key={d} className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-700 rounded-md border border-zinc-200">
+                                  {d}
+                                </span>
+                              ))}
+
+                              {/* Registration Status Pill */}
+                              {isRegistered ? (
+                                <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                  <Icon name="check" className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>✓ 您已成功報名參加</span>
+                                </span>
+                              ) : (
+                                <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-zinc-100 text-zinc-600 border border-zinc-200">
+                                  尚未登記
+                                </span>
+                              )}
+
+                              <span className="text-[11px] font-semibold text-zinc-500 flex items-center gap-1 ml-auto md:ml-0">
+                                <Icon name="users" className="w-3.5 h-3.5 text-zinc-400" />
+                                <span>已報名：<strong className="text-zinc-900">{attendees.length}</strong> 人</span>
+                              </span>
+                            </div>
+
+                            <h3 className="text-base font-extrabold text-zinc-900 tracking-tight">{ev.name}</h3>
+
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600">
+                              <span className="font-bold text-zinc-900 flex items-center gap-1">
+                                <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
+                                {ev.date}
+                              </span>
+                              <span className="font-mono flex items-center gap-1">
+                                <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
+                                {ev.startTime} - {ev.endTime}
+                              </span>
+                              {ev.location && (
+                                <span className="text-zinc-500 flex items-center gap-1">
+                                  <Icon name="mapPin" className="w-3.5 h-3.5 text-zinc-400" />
+                                  {ev.location}
+                                </span>
+                              )}
+                            </div>
+
+                            {ev.description && <p className="text-xs text-zinc-500 pt-0.5">{ev.description}</p>}
+
+                            {isRegistered && myRegistration?.signedUpAt && (
+                              <p className="text-[11px] text-emerald-600 font-medium">
+                                報名登記時間：{myRegistration.signedUpAt}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Action Buttons: Sign up / Cancel + View list */}
+                          <div className="flex flex-col sm:flex-row md:flex-col items-stretch sm:items-center md:items-end gap-2 shrink-0">
+                            {isRegistered ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (window.confirm(`確定要取消報名「${ev.name}」嗎？`)) {
+                                    const nextAttendees = attendees.filter(a => a.studentId !== member.id && a.studentName !== member.name);
+                                    if (onUpdateEvent) {
+                                      onUpdateEvent({ ...ev, attendees: nextAttendees });
+                                    }
+                                    if (onShowToast) {
+                                      onShowToast('已取消報名', `已自「${ev.name}」移除您的報名`, 'info');
+                                    }
+                                  }
+                                }}
+                                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white hover:bg-rose-50 text-zinc-600 hover:text-rose-600 border border-zinc-200 hover:border-rose-300 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                              >
+                                <Icon name="x" className="w-3.5 h-3.5" />
+                                <span>取消報名</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const now = new Date();
+                                  const nowStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                                  const newAtt = {
+                                    studentId: member.id,
+                                    studentName: member.name,
+                                    className: member.className || '',
+                                    seatNumber: member.seatNumber || '',
+                                    department: (member.departments && member.departments[0]) || '隊員',
+                                    signedUpAt: nowStr,
+                                  };
+                                  const nextAttendees = [...attendees, newAtt];
+                                  if (onUpdateEvent) {
+                                    onUpdateEvent({ ...ev, attendees: nextAttendees });
+                                  }
+                                  if (onShowToast) {
+                                    onShowToast('報名成功！', `您已成功報名參加「${ev.name}」`, 'success');
+                                  }
+                                }}
+                                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                              >
+                                <Icon name="check" className="w-4 h-4" />
+                                <span>點選報名參加</span>
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => setExpandedEventId(isExpanded ? null : ev.id)}
+                              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-50 hover:bg-zinc-100 text-zinc-600 rounded-lg text-xs font-medium border border-zinc-200 transition-colors cursor-pointer"
+                            >
+                              <Icon name="users" className="w-3 h-3 text-zinc-400" />
+                              <span>{isExpanded ? '收合同行名單' : `查看同行隊員 (${attendees.length}人)`}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Collapsible Teammates List */}
+                        {isExpanded && (
+                          <div className="px-5 pb-5 pt-2 border-t border-zinc-100 bg-zinc-50/50 animate-in fade-in duration-100">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-zinc-700">已報名隊員名冊（按班級順序）：</span>
+                              <span className="text-[11px] text-zinc-400">共 {sortedAttendees.length} 位</span>
+                            </div>
+
+                            {sortedAttendees.length === 0 ? (
+                              <p className="text-xs text-zinc-400 py-2">目前尚無其他隊員報名，搶先成為第 1 位吧！</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                {sortedAttendees.map((att, idx) => {
+                                  const isMe = att.studentId === member.id || att.studentName === member.name;
+                                  return (
+                                    <div
+                                      key={att.studentId || idx}
+                                      className={`px-3 py-1.5 rounded-xl border text-xs flex items-center gap-1.5 ${
+                                        isMe
+                                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-bold shadow-2xs'
+                                          : 'bg-white border-zinc-200 text-zinc-700'
+                                      }`}
+                                    >
+                                      {att.className && (
+                                        <span className="font-mono text-[10px] bg-zinc-100 text-zinc-600 px-1.5 py-0.2 rounded font-bold">
+                                          {att.className}
+                                          {att.seatNumber ? `-${att.seatNumber}號` : ''}
+                                        </span>
+                                      )}
+                                      <span>{att.studentName}</span>
+                                      {isMe && <span className="text-[10px] text-emerald-600 font-black">(您)</span>}
+                                      {att.department && (
+                                        <span className="text-[10px] text-zinc-400">
+                                          • {att.department}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {events.filter(e => e.allowRegistration).length === 0 && (
+                    <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
+                      <Icon name="users" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
+                      <h3 className="text-base font-bold text-zinc-800">目前尚無開放報名調查的活動</h3>
+                      <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1">
+                        當教練或管理員發布活動並開啟投票參加時，此處將自動列出供您即時登記與查看夥伴出席狀況。
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
