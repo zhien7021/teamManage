@@ -1191,6 +1191,28 @@
         return `${yyyy}-${mm}-${dd}`;
       }
 
+      function getDateOffsetStr(offsetDays = 0, baseDateStr) {
+        let d;
+        if (baseDateStr) {
+          const parts = baseDateStr.split('-');
+          d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        } else {
+          d = new Date();
+        }
+        d.setDate(d.getDate() + offsetDays);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+      }
+
+      function getCurrentMonday() {
+        const d = new Date();
+        const day = d.getDay(); // 0 is Sun, 1 is Mon, ..., 6 is Sat
+        const diff = day === 0 ? -6 : 1 - day;
+        return new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+      }
+
       // --- FIREBASE CLOUD DATABASE ENGINE (Dual Mode with LocalStorage Fallback) ---
       const DEFAULT_FIREBASE_CONFIG = {
         apiKey: "AIzaSyC0EWuQAyT_tMGleHe8UjdLmgiBC1D5Vdw",
@@ -3686,7 +3708,7 @@
 
         // --- SUBSECTION 1: 機具使用排程 STATE ---
         const [selectedMachine, setSelectedMachine] = useState('CNC銑床');
-        const [selectedDate, setSelectedDate] = useState('2026-09-17');
+        const [selectedDate, setSelectedDate] = useState(() => getTodayDateStr());
         const [checkedSlots, setCheckedSlots] = useState([]);
         const [reservationPurpose, setReservationPurpose] = useState('');
         const [targetStudentId, setTargetStudentId] = useState(currentMember ? currentMember.id : members[0].id);
@@ -3899,20 +3921,44 @@
                           className="p-2 bg-zinc-50 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:bg-white"
                         />
                         <button
-                          onClick={() => setSelectedDate('2026-09-17')}
-                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border ${selectedDate === '2026-09-17' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 text-zinc-600'}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDate(getTodayDateStr());
+                            setCheckedSlots([]);
+                          }}
+                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-colors cursor-pointer ${
+                            selectedDate === getTodayDateStr()
+                              ? 'bg-zinc-900 text-white'
+                              : 'bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                          }`}
                         >
                           今天
                         </button>
                         <button
-                          onClick={() => setSelectedDate('2026-09-18')}
-                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border ${selectedDate === '2026-09-18' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 text-zinc-600'}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDate(getDateOffsetStr(1));
+                            setCheckedSlots([]);
+                          }}
+                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-colors cursor-pointer ${
+                            selectedDate === getDateOffsetStr(1)
+                              ? 'bg-zinc-900 text-white'
+                              : 'bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                          }`}
                         >
                           明天
                         </button>
                         <button
-                          onClick={() => setSelectedDate('2026-09-19')}
-                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border ${selectedDate === '2026-09-19' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 text-zinc-600'}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDate(getDateOffsetStr(2));
+                            setCheckedSlots([]);
+                          }}
+                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-colors cursor-pointer ${
+                            selectedDate === getDateOffsetStr(2)
+                              ? 'bg-zinc-900 text-white'
+                              : 'bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                          }`}
                         >
                           後天
                         </button>
@@ -5232,13 +5278,13 @@
         onToggleSave,
         currentMember,
       }) {
-        // Start in September 2026 as per season seed data
-        const [viewDate, setViewDate] = useState(() => new Date(2026, 8, 1));
-        const [selectedDateStr, setSelectedDateStr] = useState('2026-09-18');
+        // Default to current month and today's date
+        const [viewDate, setViewDate] = useState(() => new Date());
+        const [selectedDateStr, setSelectedDateStr] = useState(() => getTodayDateStr());
         const [catFilter, setCatFilter] = useState('all');
 
         const year = viewDate.getFullYear();
-        const month = viewDate.getMonth(); // 0-indexed (8 = Sep)
+        const month = viewDate.getMonth();
 
         const prevMonth = () => {
           setViewDate(new Date(year, month - 1, 1));
@@ -5249,8 +5295,9 @@
         };
 
         const goToday = () => {
-          setViewDate(new Date(2026, 8, 1));
-          setSelectedDateStr('2026-09-17');
+          const now = new Date();
+          setViewDate(new Date(now.getFullYear(), now.getMonth(), 1));
+          setSelectedDateStr(getTodayDateStr());
         };
 
         // Filter events by catFilter if applied
@@ -8138,7 +8185,7 @@
         // Attendance Record Creation Modal State
         const [isModalOpen, setIsModalOpen] = useState(false);
         const [formStudentId, setFormStudentId] = useState(studentMembers[0]?.id || '10114-002');
-        const [formDate, setFormDate] = useState('2026-09-18');
+        const [formDate, setFormDate] = useState(() => getTodayDateStr());
         const [formType, setFormType] = useState('attendance'); // 'attendance' | 'leave' | 'unexcused'
         const [formSlots, setFormSlots] = useState(['evening']);
         const [formReason, setFormReason] = useState('');
@@ -8283,7 +8330,7 @@
 
         const handleOpenModal = (prefilledDate) => {
           if (prefilledDate) setFormDate(prefilledDate);
-          else setFormDate('2026-09-18');
+          else setFormDate(getTodayDateStr());
           if (studentMembers.length > 0 && !studentMembers.some(s => s.id === formStudentId)) {
             setFormStudentId(studentMembers[0].id);
           }
@@ -8329,9 +8376,8 @@
           setIsModalOpen(false);
         };
 
-        const baseMonday = new Date(2026, 8, 14);
-        const curMon = new Date(baseMonday);
-        curMon.setDate(baseMonday.getDate() + weekOffset * 7);
+        const curMon = getCurrentMonday();
+        curMon.setDate(curMon.getDate() + weekOffset * 7);
 
         const days = Array.from({ length: 7 }, (_, i) => {
           const d = new Date(curMon);
@@ -10946,7 +10992,7 @@
 
       function MemberAttendanceTab({ member, records, onSubmitRecord }) {
         const [type, setType] = useState('attendance');
-        const [date, setDate] = useState('2026-09-18');
+        const [date, setDate] = useState(() => getTodayDateStr());
         const [slots, setSlots] = useState(['evening']);
         const [reason, setReason] = useState('');
 
@@ -11604,9 +11650,8 @@
       function ParentAttendanceTab({ studentName, member, attendanceRecords }) {
         const [offset, setOffset] = useState(0);
 
-        const baseMonday = new Date(2026, 8, 14); // 2026-09-14 Monday
-        const curMon = new Date(baseMonday);
-        curMon.setDate(baseMonday.getDate() + offset * 7);
+        const curMon = getCurrentMonday();
+        curMon.setDate(curMon.getDate() + offset * 7);
 
         const days = Array.from({ length: 7 }, (_, i) => {
           const d = new Date(curMon);

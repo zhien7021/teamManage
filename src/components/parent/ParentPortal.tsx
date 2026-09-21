@@ -9,9 +9,23 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
-  Info,
 } from 'lucide-react';
 import { AttendanceRecord, TeamEvent, Member, TimeSlot } from '../../types';
+
+function getTodayDateStr(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getCurrentMonday(): Date {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+}
 
 interface ParentPortalProps {
   studentName: string;
@@ -34,10 +48,8 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
     m.name.includes(studentName) || studentName.includes(m.name)
   );
 
-  // Base date: Monday 2026-09-14
-  const baseMonday = new Date(2026, 8, 14);
-  const currentMonday = new Date(baseMonday);
-  currentMonday.setDate(baseMonday.getDate() + weekOffset * 7);
+  const currentMonday = getCurrentMonday();
+  currentMonday.setDate(currentMonday.getDate() + weekOffset * 7);
 
   // 7 days of the selected week
   const daysOfWeek = Array.from({ length: 7 }, (_, i) => {
@@ -54,7 +66,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
       dateStr,
       displayDate: `${d.getMonth() + 1}月${d.getDate()}日`,
       dayName,
-      isToday: dateStr === '2026-09-17',
+      isToday: dateStr === getTodayDateStr(),
     };
   });
 

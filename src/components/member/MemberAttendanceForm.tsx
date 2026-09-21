@@ -1,13 +1,10 @@
 import React, { useState } from 'react';
 import {
   Clock,
-  Calendar,
   AlertTriangle,
   UserCheck,
   UserX,
-  CheckCircle2,
   Send,
-  Sparkles,
 } from 'lucide-react';
 import { AttendanceRecord, Member, TimeSlot } from '../../types';
 
@@ -31,8 +28,14 @@ export const MemberAttendanceForm: React.FC<MemberAttendanceFormProps> = ({
   // Requirement 1: 在表格第一個可以選要「到校學習申請」還是「請假」
   const [recordType, setRecordType] = useState<'attendance' | 'leave'>('attendance');
 
-  // Date (defaults to tomorrow 2026-09-18 or today)
-  const [selectedDate, setSelectedDate] = useState('2026-09-18');
+  // Date (defaults to today)
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  });
 
   // Requirement 2: 時段（早上09-12、下午13-17、晚上18-21）
   const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>(['evening']);

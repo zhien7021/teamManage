@@ -107,6 +107,13 @@ function getTodayDateStr(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function getCurrentMonday(): Date {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+}
+
 function exportAttendanceToCSV(filename: string, headers: string[], rows: (string | number)[][]) {
   const BOM = '\uFEFF';
   const csvRows = [
@@ -138,14 +145,11 @@ export const AdminAttendance: React.FC<AdminAttendanceProps> = ({
   records,
   members,
 }) => {
-  // Week offset: 0 = current week (2026-09-14 to 2026-09-20), -1 = previous, 1 = next
+  // Week offset: 0 = current week, -1 = previous, 1 = next
   const [weekOffset, setWeekOffset] = useState<number>(0);
 
-  // Base date for "current week": Monday 2026-09-14
-  const baseMonday = new Date(2026, 8, 14); // Sep 14, 2026 (Month is 0-indexed)
-
-  const currentMonday = new Date(baseMonday);
-  currentMonday.setDate(baseMonday.getDate() + weekOffset * 7);
+  const currentMonday = getCurrentMonday();
+  currentMonday.setDate(currentMonday.getDate() + weekOffset * 7);
 
   // Generate 7 days (Monday to Sunday)
   const daysOfWeek = Array.from({ length: 7 }, (_, i) => {
@@ -163,7 +167,7 @@ export const AdminAttendance: React.FC<AdminAttendanceProps> = ({
       dateStr,
       displayDate: `${d.getMonth() + 1}月${d.getDate()}日`,
       dayName,
-      isToday: dateStr === '2026-09-17',
+      isToday: dateStr === getTodayDateStr(),
     };
   });
 

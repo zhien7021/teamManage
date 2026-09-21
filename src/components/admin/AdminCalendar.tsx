@@ -45,6 +45,14 @@ const ALL_DEPARTMENTS: Department[] = [
   '行銷管理組',
 ];
 
+function getTodayDateStr(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export const AdminCalendar: React.FC<AdminCalendarProps> = ({
   events,
   members = [],
@@ -65,7 +73,7 @@ export const AdminCalendar: React.FC<AdminCalendarProps> = ({
   // Form State
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<EventType>('機電整合組培訓');
-  const [formDate, setFormDate] = useState('2026-09-22');
+  const [formDate, setFormDate] = useState(() => getTodayDateStr());
   const [formStartTime, setFormStartTime] = useState('18:00');
   const [formEndTime, setFormEndTime] = useState('20:30');
   const [formDepts, setFormDepts] = useState<Department[]>(['機電整合組']);
