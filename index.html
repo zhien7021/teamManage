@@ -1256,6 +1256,139 @@
         return null;
       }
 
+      // Smart Array Delta Merge for Firestore Atomic Transactions
+      function smartMergeField(key, remoteVal, prevVal, nextVal) {
+        if (!Array.isArray(remoteVal) || !Array.isArray(nextVal)) {
+          return nextVal;
+        }
+        // If prevVal is not available or empty, union remote and next based on id
+        if (!Array.isArray(prevVal) || prevVal.length === 0) {
+          const remoteIds = new Set(remoteVal.map(x => x && x.id));
+          const additions = nextVal.filter(x => x && x.id && !remoteIds.has(x.id));
+          return [...additions, ...remoteVal];
+        }
+
+        const prevIds = new Set(prevVal.map(x => x && x.id));
+        const nextIds = new Set(nextVal.map(x => x && x.id));
+        const nextMap = new Map(nextVal.map(x => [x && x.id, x]));
+
+        // Items explicitly added by this client
+        const addedItems = nextVal.filter(x => x && x.id && !prevIds.has(x.id));
+        // Items explicitly removed by this client
+        const deletedIds = new Set(prevVal.filter(x => x && x.id && !nextIds.has(x.id)).map(x => x.id));
+        // Items modified by this client
+        const modifiedMap = new Map();
+        nextVal.forEach(x => {
+          if (x && x.id && prevIds.has(x.id)) {
+            const p = prevVal.find(p => p && p.id === x.id);
+            if (p && JSON.stringify(p) !== JSON.stringify(x)) {
+              modifiedMap.set(x.id, x);
+            }
+          }
+        });
+
+        // Special handling for events (which contain nested attendees list)
+        if (key === 'events') {
+          let merged = remoteVal.filter(x => x && x.id && !deletedIds.has(x.id)).map(remoteEv => {
+            if (nextMap.has(remoteEv.id)) {
+              const localEv = nextMap.get(remoteEv.id);
+              const prevEv = prevVal.find(p => p && p.id === remoteEv.id);
+
+              // Smart merge attendees inside this event
+              const remoteAttendees = Array.isArray(remoteEv.attendees) ? remoteEv.attendees : [];
+              const localAttendees = Array.isArray(localEv.attendees) ? localEv.attendees : [];
+              const prevAttendees = prevEv && Array.isArray(prevEv.attendees) ? prevEv.attendees : [];
+
+              const prevAttKeys = new Set(prevAttendees.map(a => a.studentId || a.studentName || a.id));
+              const localAttKeys = new Set(localAttendees.map(a => a.studentId || a.studentName || a.id));
+
+              // Attendees added by this client
+              const addedAtts = localAttendees.filter(a => !prevAttKeys.has(a.studentId || a.studentName || a.id));
+              // Attendees removed by this client
+              const removedAttKeys = new Set(
+                prevAttendees
+                  .filter(a => !localAttKeys.has(a.studentId || a.studentName || a.id))
+                  .map(a => a.studentId || a.studentName || a.id)
+              );
+
+              // Keep remote attendees that were not explicitly removed by this client
+              let mergedAttendees = remoteAttendees.filter(a => !removedAttKeys.has(a.studentId || a.studentName || a.id));
+              const existingKeys = new Set(mergedAttendees.map(a => a.studentId || a.studentName || a.id));
+
+              // Add newly added attendees from this client
+              addedAtts.forEach(a => {
+                const k = a.studentId || a.studentName || a.id;
+                if (!existingKeys.has(k)) {
+                  mergedAttendees.push(a);
+                  existingKeys.add(k);
+                }
+              });
+
+              return {
+                ...remoteEv,
+                ...localEv,
+                attendees: mergedAttendees,
+              };
+            }
+            return remoteEv;
+          });
+
+          // Add newly created events
+          const mergedIds = new Set(merged.map(x => x && x.id));
+          addedItems.forEach(x => {
+            if (!mergedIds.has(x.id)) {
+              merged.push(x);
+              mergedIds.add(x.id);
+            }
+          });
+          return merged;
+        }
+
+        // Special handling for reservations (prevent duplicate slot collisions)
+        if (key === 'reservations') {
+          let merged = remoteVal.filter(x => x && x.id && !deletedIds.has(x.id)).map(x => {
+            if (modifiedMap.has(x.id)) return modifiedMap.get(x.id);
+            return x;
+          });
+          const mergedIds = new Set(merged.map(x => x.id));
+          addedItems.forEach(x => {
+            if (!mergedIds.has(x.id)) {
+              // Check if machine slot is already booked by another user
+              const conflict = merged.some(m => m.machine === x.machine && m.date === x.date && m.slot === x.slot);
+              if (!conflict) {
+                merged.push(x);
+                mergedIds.add(x.id);
+              } else {
+                console.warn(`[Sync Conflict] Slot already reserved: ${x.machine} ${x.date} ${x.slot}`);
+              }
+            }
+          });
+          return merged;
+        }
+
+        // Standard array merge for attendance, tasks, pendingTasks, materials, members, eduCategories, eduEquipment
+        let merged = remoteVal.filter(x => x && x.id && !deletedIds.has(x.id)).map(x => {
+          if (modifiedMap.has(x.id)) return modifiedMap.get(x.id);
+          return x;
+        });
+
+        const mergedIds = new Set(merged.map(x => x.id));
+        if (key === 'attendance' || key === 'pendingTasks') {
+          // Prepend newly added records to the front
+          const toPrepend = addedItems.filter(x => !mergedIds.has(x.id));
+          merged = [...toPrepend, ...merged];
+        } else {
+          // Append newly added items to the end
+          addedItems.forEach(x => {
+            if (!mergedIds.has(x.id)) {
+              merged.push(x);
+              mergedIds.add(x.id);
+            }
+          });
+        }
+        return merged;
+      }
+
       // --- 3. MAIN COMPONENT ROOT ---
       function App() {
         // Core persistent states
@@ -1449,6 +1582,32 @@
         useEffect(() => { localStorage.setItem('frc10114_edu_categories', JSON.stringify(eduCategories)); }, [eduCategories]);
         useEffect(() => { localStorage.setItem('frc10114_eduequipment', JSON.stringify(eduEquipment)); }, [eduEquipment]);
 
+        // Keep localStateRef synchronized with the latest local state snapshots
+        const localStateRef = React.useRef({
+          members,
+          events,
+          tasks,
+          pendingTasks,
+          materials,
+          attendance,
+          reservations: machineReservations,
+          eduCategories,
+          eduEquipment,
+        });
+        useEffect(() => {
+          localStateRef.current = {
+            members,
+            events,
+            tasks,
+            pendingTasks,
+            materials,
+            attendance,
+            reservations: machineReservations,
+            eduCategories,
+            eduEquipment,
+          };
+        }, [members, events, tasks, pendingTasks, materials, attendance, machineReservations, eduCategories, eduEquipment]);
+
         // Auto-migration: ensure legacy '程式設計' in events is cleanly migrated to '程式控制'
         useEffect(() => {
           let hasEventMigration = false;
@@ -1481,7 +1640,7 @@
           }
         }, []);
 
-        // Real-time Firestore sync listener (Dual-Engine)
+        // Real-time Firestore sync listener (Dual-Engine with Clock-Skew Protection)
         useEffect(() => {
           if (!firebaseConfig) {
             setIsFirebaseConnected(false);
@@ -1498,16 +1657,8 @@
               setIsFirebaseConnected(true);
               if (doc.exists) {
                 const data = doc.data();
+                // Filter out writes originated by this exact client tab/device
                 if (data && data.updatedBy !== clientIdRef.current) {
-                  const localTime = parseInt(localStorage.getItem('frc10114_last_local_update') || '0', 10);
-                  const remoteTime = data.updatedAt || 0;
-                  // If local changes are strictly newer than Firestore's last saved updatedAt,
-                  // push local changes up rather than letting stale Firestore snapshot stomp on them
-                  if (localTime > remoteTime && (localTime - remoteTime) > 1500) {
-                    syncToCloud();
-                    return;
-                  }
-
                   isRemoteUpdateRef.current = true;
                   if (data.members && Array.isArray(data.members)) {
                     setMembers(data.members);
@@ -1570,7 +1721,7 @@
           return () => { if (unsub) unsub(); };
         }, [firebaseConfig]);
 
-        // Push state changes to Cloud Firestore
+        // Push state changes to Cloud Firestore with Granular Field Isolation & Atomic Smart Merge
         const syncToCloud = async (overrideData = null) => {
           const nowTs = Date.now();
           try { localStorage.setItem('frc10114_last_local_update', nowTs.toString()); } catch (e) {}
@@ -1580,22 +1731,111 @@
             const db = initFirestore(firebaseConfig);
             if (!db) return false;
             setIsSyncingCloud(true);
-            const payload = {
-              members,
-              events,
-              tasks,
-              pendingTasks,
-              materials,
-              attendance,
-              reservations: machineReservations,
-              eduCategories,
-              eduEquipment,
-              updatedAt: nowTs,
-              updatedBy: clientIdRef.current,
-              ...(overrideData || {}),
-            };
-            const cleanPayload = JSON.parse(JSON.stringify(payload));
-            await db.collection('frc10114_teams').doc('team_state').set(cleanPayload, { merge: true });
+
+            // Case 1: Full Document Push (Explicit initial seed or manual override)
+            if (!overrideData) {
+              const fullPayload = {
+                members,
+                events,
+                tasks,
+                pendingTasks,
+                materials,
+                attendance,
+                reservations: machineReservations,
+                eduCategories,
+                eduEquipment,
+                updatedAt: nowTs,
+                updatedBy: clientIdRef.current,
+              };
+              const cleanPayload = JSON.parse(JSON.stringify(fullPayload));
+              await db.collection('frc10114_teams').doc('team_state').set(cleanPayload, { merge: true });
+              setIsFirebaseConnected(true);
+              setIsSyncingCloud(false);
+              return true;
+            }
+
+            // Case 2: Granular Update with Atomic Transaction & Smart Merge
+            const docRef = db.collection('frc10114_teams').doc('team_state');
+            const prevSnapshot = { ...localStateRef.current };
+            // Update local ref immediately so rapid subsequent actions reflect latest state
+            localStateRef.current = { ...localStateRef.current, ...overrideData };
+
+            let transactionPayload = null;
+            try {
+              await db.runTransaction(async (transaction) => {
+                const snap = await transaction.get(docRef);
+                const remoteDoc = snap.exists ? (snap.data() || {}) : {};
+                const txPayload = {
+                  updatedAt: nowTs,
+                  updatedBy: clientIdRef.current,
+                };
+
+                for (const key of Object.keys(overrideData)) {
+                  const nextVal = overrideData[key];
+                  const remoteVal = remoteDoc[key];
+                  const prevVal = prevSnapshot[key];
+
+                  if (Array.isArray(nextVal) && Array.isArray(remoteVal)) {
+                    txPayload[key] = smartMergeField(key, remoteVal, prevVal, nextVal);
+                  } else {
+                    txPayload[key] = nextVal;
+                  }
+                }
+
+                transactionPayload = txPayload;
+                const cleanTx = JSON.parse(JSON.stringify(txPayload));
+                transaction.set(docRef, cleanTx, { merge: true });
+              });
+
+              // If transaction incorporated remote updates from other users, reflect them locally
+              if (transactionPayload) {
+                for (const key of Object.keys(transactionPayload)) {
+                  if (key === 'updatedAt' || key === 'updatedBy') continue;
+                  const mergedVal = transactionPayload[key];
+                  if (Array.isArray(mergedVal) && Array.isArray(overrideData[key]) && mergedVal.length !== overrideData[key].length) {
+                    if (key === 'attendance') {
+                      setAttendance(mergedVal);
+                      try { localStorage.setItem('frc10114_attendance', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'reservations') {
+                      setMachineReservations(mergedVal);
+                      try { localStorage.setItem('frc10114_reservations', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'events') {
+                      setEvents(mergedVal);
+                      try { localStorage.setItem('frc10114_events', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'tasks') {
+                      setTasks(mergedVal);
+                      try { localStorage.setItem('frc10114_tasks', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'pendingTasks') {
+                      setPendingTasks(mergedVal);
+                      try { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'materials') {
+                      setMaterials(mergedVal);
+                      try { localStorage.setItem('frc10114_materials', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'members') {
+                      setMembers(mergedVal);
+                      try { localStorage.setItem('frc10114_members', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'eduCategories') {
+                      setEduCategories(mergedVal);
+                      try { localStorage.setItem('frc10114_edu_categories', JSON.stringify(mergedVal)); } catch (e) {}
+                    } else if (key === 'eduEquipment') {
+                      setEduEquipment(mergedVal);
+                      try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(mergedVal)); } catch (e) {}
+                    }
+                  }
+                }
+              }
+            } catch (txErr) {
+              console.warn('Transaction failed, falling back to granular doc set:', txErr);
+              // Fallback: Direct granular update without touching other modules
+              const fallbackPayload = {
+                ...overrideData,
+                updatedAt: nowTs,
+                updatedBy: clientIdRef.current,
+              };
+              const cleanFallback = JSON.parse(JSON.stringify(fallbackPayload));
+              await docRef.set(cleanFallback, { merge: true });
+            }
+
             setIsFirebaseConnected(true);
             setIsSyncingCloud(false);
             return true;
@@ -1605,20 +1845,6 @@
             return false;
           }
         };
-
-        // Debounced auto sync to Firebase when connected (prevents echo loops)
-        useEffect(() => {
-          if (isRemoteUpdateRef.current) {
-            isRemoteUpdateRef.current = false;
-            return;
-          }
-          if (isFirebaseConnected && firebaseConfig) {
-            const timer = setTimeout(() => {
-              syncToCloud();
-            }, 1000);
-            return () => clearTimeout(timer);
-          }
-        }, [members, events, tasks, pendingTasks, materials, attendance, machineReservations, eduCategories, eduEquipment, isFirebaseConnected]);
 
         // Keep draft in sync with selected member
         useEffect(() => {
@@ -2229,21 +2455,36 @@
             setEduEquipment(INITIAL_EDU_EQUIPMENT);
             setCustomSavedEventIds([3]);
             localStorage.clear();
+            syncToCloud({
+              members: INITIAL_MEMBERS,
+              events: INITIAL_EVENTS,
+              tasks: INITIAL_TASKS,
+              pendingTasks: INITIAL_PENDING_TASKS,
+              materials: INITIAL_MATERIALS,
+              attendance: INITIAL_ATTENDANCE,
+              reservations: INITIAL_MACHINE_RESERVATIONS,
+              eduCategories: INITIAL_EDU_CATEGORIES,
+              eduEquipment: INITIAL_EDU_EQUIPMENT,
+            });
             showToast('資料重設完成', '已還原為原廠示範資料庫', 'info');
           }
         };
 
         // Restore from JSON backup payload
         const handleRestoreBackup = (payload) => {
-          if (payload.members) setMembers(payload.members);
-          if (payload.events) setEvents(payload.events);
-          if (payload.tasks) setTasks(payload.tasks);
-          if (payload.pendingTasks) setPendingTasks(payload.pendingTasks);
-          if (payload.materials) setMaterials(payload.materials);
-          if (payload.attendance) setAttendance(payload.attendance);
-          if (payload.machineReservations) setMachineReservations(payload.machineReservations);
-          if (payload.eduCategories) setEduCategories(payload.eduCategories);
-          if (payload.eduEquipment) setEduEquipment(payload.eduEquipment);
+          const toSync = {};
+          if (payload.members) { setMembers(payload.members); toSync.members = payload.members; }
+          if (payload.events) { setEvents(payload.events); toSync.events = payload.events; }
+          if (payload.tasks) { setTasks(payload.tasks); toSync.tasks = payload.tasks; }
+          if (payload.pendingTasks) { setPendingTasks(payload.pendingTasks); toSync.pendingTasks = payload.pendingTasks; }
+          if (payload.materials) { setMaterials(payload.materials); toSync.materials = payload.materials; }
+          if (payload.attendance) { setAttendance(payload.attendance); toSync.attendance = payload.attendance; }
+          if (payload.machineReservations) { setMachineReservations(payload.machineReservations); toSync.reservations = payload.machineReservations; }
+          if (payload.eduCategories) { setEduCategories(payload.eduCategories); toSync.eduCategories = payload.eduCategories; }
+          if (payload.eduEquipment) { setEduEquipment(payload.eduEquipment); toSync.eduEquipment = payload.eduEquipment; }
+          if (Object.keys(toSync).length > 0) {
+            syncToCloud(toSync);
+          }
           showToast('系統資料還原成功！', '已從 JSON 備份檔恢復所有最新隊務紀錄', 'success');
         };
 
