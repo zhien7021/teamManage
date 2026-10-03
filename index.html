@@ -1354,12 +1354,20 @@
           addedItems.forEach(x => {
             if (!mergedIds.has(x.id)) {
               // Check if machine slot is already booked by another user
-              const conflict = merged.some(m => m.machine === x.machine && m.date === x.date && m.slot === x.slot);
+              const targetSlot = x.timeSlot || x.slot;
+              const conflict = Boolean(
+                targetSlot &&
+                merged.some(m =>
+                  m.machine === x.machine &&
+                  m.date === x.date &&
+                  (m.timeSlot || m.slot) === targetSlot
+                )
+              );
               if (!conflict) {
                 merged.push(x);
                 mergedIds.add(x.id);
               } else {
-                console.warn(`[Sync Conflict] Slot already reserved: ${x.machine} ${x.date} ${x.slot}`);
+                console.warn(`[Sync Conflict] Slot already reserved: ${x.machine} ${x.date} ${targetSlot}`);
               }
             }
           });
@@ -2498,6 +2506,7 @@
             machine,
             date,
             timeSlot: s,
+            slot: s,
             studentId,
             studentName,
             purpose,
@@ -4236,7 +4245,7 @@
                 {/* 12-Hourly Slots Matrix (09:00 - 21:00) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                   {MACHINE_TIME_SLOTS.map(slotStr => {
-                    const reservation = dayReservations.find(r => r.timeSlot === slotStr);
+                    const reservation = dayReservations.find(r => (r.timeSlot || r.slot) === slotStr);
                     const isOccupied = Boolean(reservation);
                     const isChecked = checkedSlots.includes(slotStr);
 
