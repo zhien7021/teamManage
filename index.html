@@ -8366,7 +8366,18 @@
       function formatStudentWithClass(studentName, studentId, membersList) {
         const m = (membersList || []).find(x => x.id === studentId || x.name === studentName);
         const code = m ? extractClassCode(m.className) : '';
-        return code ? `${code}${studentName}` : studentName;
+        const seatNum = m && m.seatNumber ? String(m.seatNumber).replace(/\D/g, '') : '';
+        const seatStr = seatNum ? seatNum.padStart(2, '0') : '';
+        if (code && seatStr) {
+          if (code.endsWith(seatStr) && code.length >= 5) {
+            return `${code}${studentName}`;
+          }
+          return `${code}${seatStr}${studentName}`;
+        }
+        if (code) {
+          return `${code}${studentName}`;
+        }
+        return studentName;
       }
 
       function sortStudentsByClassOrder(studentItems, membersList) {
@@ -8381,12 +8392,22 @@
           const hasNumA = !isNaN(numA) && numA > 0;
           const hasNumB = !isNaN(numB) && numB > 0;
 
+          const cleanSeat = (s) => {
+            if (!s) return NaN;
+            const digits = String(s).replace(/\D/g, '');
+            return digits ? parseInt(digits, 10) : NaN;
+          };
+          const seatA = cleanSeat(mA && mA.seatNumber);
+          const seatB = cleanSeat(mB && mB.seatNumber);
+
           if (hasNumA && hasNumB) {
             if (numA !== numB) return numA - numB;
-            const seatA = parseInt(mA && mA.seatNumber, 10);
-            const seatB = parseInt(mB && mB.seatNumber, 10);
-            if (!isNaN(seatA) && !isNaN(seatB) && seatA !== seatB) {
-              return seatA - seatB;
+            if (!isNaN(seatA) && !isNaN(seatB)) {
+              if (seatA !== seatB) return seatA - seatB;
+            } else if (!isNaN(seatA)) {
+              return -1;
+            } else if (!isNaN(seatB)) {
+              return 1;
             }
             return (a.studentName || '').localeCompare(b.studentName || '', 'zh-Hant');
           }
@@ -8394,6 +8415,13 @@
           if (!hasNumA && hasNumB) return 1;
 
           if (codeA !== codeB) return (codeA || '').localeCompare(codeB || '');
+          if (!isNaN(seatA) && !isNaN(seatB)) {
+            if (seatA !== seatB) return seatA - seatB;
+          } else if (!isNaN(seatA)) {
+            return -1;
+          } else if (!isNaN(seatB)) {
+            return 1;
+          }
           return (a.studentName || '').localeCompare(b.studentName || '', 'zh-Hant');
         });
       }
@@ -8472,17 +8500,40 @@
           const afternoonStr = afternoonNames.length > 0 ? afternoonNames.join('、') : '無人申請';
           const eveningStr = eveningNames.length > 0 ? eveningNames.join('、') : '';
 
-          let text = `📢 【明日申請在校學習名單】\n📅 日期：${exportDate}\n\n明日申請在校人員如下：\n⛅ 上午 (09-12點)：\n${morningStr}\n\n☀️ 下午 (13-17點)：\n${afternoonStr}`;
-          if (eveningStr) {
-            text += `\n\n🌙 晚上 (18-21點)：\n${eveningStr}`;
+          const periodSections = [];
+          if (morningNames.length > 0) {
+            periodSections.push(`⛅ 上午 (09-12點)：\n${morningNames.join('\n')}`);
+          }
+          if (afternoonNames.length > 0) {
+            periodSections.push(`☀️ 下午 (13-17點)：\n${afternoonNames.join('\n')}`);
+          }
+          if (eveningNames.length > 0) {
+            periodSections.push(`🌙 晚上 (18-21點)：\n${eveningNames.join('\n')}`);
           }
 
-          const tsv = [
-            ['日期', '時段', '申請留校名單 (依班級排序)', '人數'].join('\t'),
-            [exportDate, '上午 (09-12點)', morningStr, sortedMorning.length].join('\t'),
-            [exportDate, '下午 (13-17點)', afternoonStr, sortedAfternoon.length].join('\t'),
-            ...(eveningStr ? [[exportDate, '晚上 (18-21點)', eveningStr, sortedEvening.length].join('\t')] : [])
-          ].join('\n');
+          let text = `📢 【明日申請在校學習名單】\n📅 日期：${exportDate}\n\n明日申請在校人員如下：\n`;
+          if (periodSections.length > 0) {
+            text += periodSections.join('\n\n');
+          } else {
+            text += '無人申請留校';
+          }
+
+          const tsvRows = [
+            ['日期', '時段', '申請留校名單 (依班級座號排序)', '人數'].join('\t')
+          ];
+          if (sortedMorning.length > 0) {
+            tsvRows.push([exportDate, '上午 (09-12點)', morningNames.join('、'), sortedMorning.length].join('\t'));
+          }
+          if (sortedAfternoon.length > 0) {
+            tsvRows.push([exportDate, '下午 (13-17點)', afternoonNames.join('、'), sortedAfternoon.length].join('\t'));
+          }
+          if (sortedEvening.length > 0) {
+            tsvRows.push([exportDate, '晚上 (18-21點)', eveningNames.join('、'), sortedEvening.length].join('\t'));
+          }
+          if (tsvRows.length === 1) {
+            tsvRows.push([exportDate, '全日', '無人申請', 0].join('\t'));
+          }
+          const tsv = tsvRows.join('\n');
 
           return {
             targetDate: exportDate,
@@ -9148,7 +9199,7 @@
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="text-xs font-bold text-zinc-700 flex items-center gap-1">
-                          <span>即時通報預覽（已依班級順序 102 → 104 → 105 → 106... 排列）</span>
+                          <span>即時通報預覽（已依班級座號排列，僅顯示有留校之時段）</span>
                         </span>
                         <span className="text-[11px] font-mono text-zinc-400">
                           上午 {exportRecords.morningCount} 人 · 下午 {exportRecords.afternoonCount} 人{exportRecords.eveningCount > 0 ? ` · 晚上 ${exportRecords.eveningCount} 人` : ''}
@@ -9193,14 +9244,23 @@
                       <button
                         type="button"
                         onClick={() => {
+                          const csvRows = [];
+                          if (exportRecords.morningCount > 0) {
+                            csvRows.push([exportRecords.targetDate, '上午 (09-12點)', exportRecords.morningNames.join('、'), exportRecords.morningCount]);
+                          }
+                          if (exportRecords.afternoonCount > 0) {
+                            csvRows.push([exportRecords.targetDate, '下午 (13-17點)', exportRecords.afternoonNames.join('、'), exportRecords.afternoonCount]);
+                          }
+                          if (exportRecords.eveningCount > 0) {
+                            csvRows.push([exportRecords.targetDate, '晚上 (18-21點)', exportRecords.eveningNames.join('、'), exportRecords.eveningCount]);
+                          }
+                          if (csvRows.length === 0) {
+                            csvRows.push([exportRecords.targetDate, '全日', '無人申請', 0]);
+                          }
                           exportToCSV(
                             `FRC10114_留校名單_${exportRecords.targetDate}.csv`,
-                            ['日期', '時段', '申請留校名單 (依班級順序)', '人數'],
-                            [
-                              [exportRecords.targetDate, '上午 (09-12點)', exportRecords.morningStr, exportRecords.morningCount],
-                              [exportRecords.targetDate, '下午 (13-17點)', exportRecords.afternoonStr, exportRecords.afternoonCount],
-                              ...(exportRecords.eveningStr ? [[exportRecords.targetDate, '晚上 (18-21點)', exportRecords.eveningStr, exportRecords.eveningCount]] : [])
-                            ]
+                            ['日期', '時段', '申請留校名單 (依班級座號順序)', '人數'],
+                            csvRows
                           );
                         }}
                         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 text-zinc-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
