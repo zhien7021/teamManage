@@ -3659,11 +3659,19 @@
                     const now = new Date();
                     const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
                     const newRec = { ...rec, id: `att-${Date.now()}`, submittedAt: timeStr };
-                    const next = [newRec, ...attendance];
+                    const filtered = attendance.filter(r => !(r.studentId === rec.studentId && r.date === rec.date));
+                    const next = [newRec, ...filtered];
                     setAttendance(next);
                     try { localStorage.setItem('frc10114_attendance', JSON.stringify(next)); } catch (e) {}
                     syncToCloud({ attendance: next });
                     showToast('申請送出成功！', `已登記 ${rec.date} 之時段，即刻同步至管理員與家長週表。`, 'success');
+                  }}
+                  onCancelRecord={(recId, dateStr, typeText) => {
+                    const next = attendance.filter(r => r.id !== recId);
+                    setAttendance(next);
+                    try { localStorage.setItem('frc10114_attendance', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ attendance: next });
+                    showToast('已取消申請', `已成功取消「${dateStr}」之${typeText}登記。`, 'info');
                   }}
                 />
               )}
@@ -8450,6 +8458,29 @@
         return `${yyyy}-${mm}-${dd}`;
       }
 
+      // 考勤留校申請/取消截止時間判斷 (前一日 21:00 截止)
+      function getAttendanceDeadline(dateStr) {
+        if (!dateStr) return null;
+        const parts = String(dateStr).split('-').map(Number);
+        if (parts.length !== 3) return null;
+        return new Date(parts[0], parts[1] - 1, parts[2] - 1, 21, 0, 0, 0);
+      }
+
+      function isAttendanceLocked(dateStr) {
+        const deadline = getAttendanceDeadline(dateStr);
+        if (!deadline) return false;
+        return new Date() > deadline;
+      }
+
+      function formatAttendanceDeadline(dateStr) {
+        const deadline = getAttendanceDeadline(dateStr);
+        if (!deadline) return '';
+        const yyyy = deadline.getFullYear();
+        const mm = String(deadline.getMonth() + 1).padStart(2, '0');
+        const dd = String(deadline.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd} 21:00`;
+      }
+
       function AdminAttendanceTab({ records, members, onAddRecord, onDeleteRecord }) {
         const [weekOffset, setWeekOffset] = useState(0);
 
@@ -11303,26 +11334,120 @@
         );
       }
 
-      function MemberAttendanceTab({ member, records, onSubmitRecord }) {
+      function MemberAttendanceTab({ member, records, onSubmitRecord, onCancelRecord }) {
         const [type, setType] = useState('attendance');
-        const [date, setDate] = useState(() => getTodayDateStr());
+        const [date, setDate] = useState(() => getTomorrowDateStr());
         const [slots, setSlots] = useState(['evening']);
         const [reason, setReason] = useState('');
+        const [confirmCancelRecord, setConfirmCancelRecord] = useState(null);
 
-        const myRecs = records.filter(r => r.studentId === member.id);
+        // Sort so newest / upcoming applications are on top
+        const myRecs = records
+          .filter(r => r.studentId === member.id)
+          .sort((a, b) => (a.date > b.date ? -1 : a.date < b.date ? 1 : 0));
+
+        const isCurrentDateLocked = isAttendanceLocked(date);
 
         const handleSubmit = (e) => {
           e.preventDefault();
+          if (isCurrentDateLocked) {
+            alert('此日期已超過前一日 21:00 登記截止時間，系統已鎖定無法自行申請！若有緊急到校需求或請假，請直接聯繫管理員或教練。');
+            return;
+          }
           if (slots.length === 0) return;
           if (type === 'leave' && !reason.trim()) return;
           onSubmitRecord({ studentId: member.id, studentName: member.name, type, date, slots, reason: type === 'leave' ? reason : undefined });
           setReason('');
         };
 
+        const handleExecuteCancel = () => {
+          if (!confirmCancelRecord) return;
+          if (isAttendanceLocked(confirmCancelRecord.date)) {
+            alert('此申請已超過前一日 21:00 截止時間，系統已鎖定無法自行取消！如需臨時異動請直接向管理員或教練報備。');
+            setConfirmCancelRecord(null);
+            return;
+          }
+          const typeText = confirmCancelRecord.type === 'attendance' ? '留校實作' : confirmCancelRecord.type === 'leave' ? '請假' : '未請假';
+          if (onCancelRecord) {
+            onCancelRecord(confirmCancelRecord.id, confirmCancelRecord.date, typeText);
+          }
+          setConfirmCancelRecord(null);
+        };
+
         const slotMap = { morning: '早上 09-12', afternoon: '下午 13-17', evening: '晚上 18-21' };
 
         return (
           <div className="space-y-6">
+            {/* Modal: Confirmation to cancel an application */}
+            {confirmCancelRecord && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-zinc-200 space-y-4">
+                  <div className="flex items-center gap-3 text-rose-600">
+                    <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center border border-rose-100 flex-shrink-0">
+                      <Icon name="alert" className="w-5 h-5 text-rose-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-zinc-900">確認取消申請？</h3>
+                      <p className="text-xs text-zinc-500">取消後將自留校名冊中移除此時段</p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-200 text-xs space-y-1.5">
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">申請日期：</span>
+                      <span className="font-bold font-mono text-zinc-900">{confirmCancelRecord.date}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">申請項目：</span>
+                      <span className={`font-bold ${
+                        confirmCancelRecord.type === 'attendance' ? 'text-emerald-700' :
+                        confirmCancelRecord.type === 'leave' ? 'text-amber-700' : 'text-rose-700'
+                      }`}>
+                        {confirmCancelRecord.type === 'attendance' ? '留校實作' : confirmCancelRecord.type === 'leave' ? '填寫請假' : '未請假'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">登記時段：</span>
+                      <span className="font-mono text-zinc-800">
+                        {confirmCancelRecord.slots.map(s => slotMap[s]).join(', ')}
+                      </span>
+                    </div>
+                    {confirmCancelRecord.reason && (
+                      <div className="flex justify-between text-zinc-500 pt-1 border-t border-zinc-200/60">
+                        <span>事由：</span>
+                        <span className="text-zinc-700 italic truncate max-w-[180px]">{confirmCancelRecord.reason}</span>
+                      </div>
+                    )}
+                    <div className="pt-1.5 border-t border-zinc-200 text-[11px] text-zinc-500">
+                      ⏰ 取消截止時間：<strong className="text-zinc-700 font-mono">{formatAttendanceDeadline(confirmCancelRecord.date)}</strong>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-zinc-600 leading-relaxed">
+                    確定要取消此筆申請嗎？截止時間（前一日 21:00）前您仍可隨時重新登記。
+                  </p>
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmCancelRecord(null)}
+                      className="flex-1 py-2.5 px-3 border border-zinc-300 rounded-xl text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors"
+                    >
+                      保留申請
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExecuteCancel}
+                      className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs flex items-center justify-center gap-1.5"
+                    >
+                      <Icon name="trash" className="w-3.5 h-3.5" />
+                      <span>確定取消</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs">
               <div className="flex items-center gap-1.5 text-xs font-bold text-orange-600 uppercase mb-1">
                 <Icon name="clock" className="w-3.5 h-3.5" />
@@ -11337,9 +11462,9 @@
             <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-3 text-xs text-amber-950">
               <Icon name="alert" className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
               <div>
-                <span className="font-black text-sm block">重要隊規守則：前一日 21:00 前填寫時段</span>
+                <span className="font-black text-sm block">重要隊規守則：前一日 21:00 前填寫或取消時段</span>
                 <span className="leading-relaxed opacity-90">
-                  隊員需在<strong>前一天晚上 9 點 (21:00) 前</strong>填寫隔日留校時段或請假，以利管理員教練掌握人數與安全照護。
+                  隊員需在<strong>前一天晚上 9 點 (21:00) 前</strong>完成隔日留校時段登記或取消。<strong>9 點後系統將自動鎖定</strong>，無法自行申請或移除，以利管理員與教練掌握出缺勤人數與學生安全。
                 </span>
               </div>
             </div>
@@ -11373,14 +11498,34 @@
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-zinc-700 mb-1">2. 登記日期 *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-zinc-700">2. 登記日期 *</label>
+                    <span className="text-[11px] text-zinc-500 font-mono">
+                      截止時間：{formatAttendanceDeadline(date)}
+                    </span>
+                  </div>
                   <input
                     type="date"
                     required
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
-                    className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs"
+                    className={`w-full p-2.5 border rounded-lg text-xs font-medium transition-colors ${
+                      isCurrentDateLocked
+                        ? 'border-rose-400 bg-rose-50/40 text-rose-950 focus:ring-rose-500'
+                        : 'border-zinc-300 focus:ring-orange-500'
+                    }`}
                   />
+                  {isCurrentDateLocked && (
+                    <div className="mt-2 p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-start gap-2">
+                      <Icon name="lock" className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <span className="font-bold block text-rose-900">此日期已超過登記截止時間 (前一日 21:00)</span>
+                        <span className="text-[11px] leading-relaxed text-rose-700 block">
+                          系統已鎖定無法自行登記或取消。如有緊急到校需求或突發請假，請直接聯繫管理員或教練。
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -11427,31 +11572,82 @@
 
                 <button
                   type="submit"
-                  className="w-full py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow-xs"
+                  disabled={isCurrentDateLocked}
+                  className={`w-full py-2.5 font-bold text-xs rounded-lg transition-all ${
+                    isCurrentDateLocked
+                      ? 'bg-zinc-200 text-zinc-400 border border-zinc-300 cursor-not-allowed'
+                      : 'bg-orange-600 hover:bg-orange-700 text-white shadow-xs cursor-pointer'
+                  }`}
                 >
-                  送出登記
+                  {isCurrentDateLocked ? '🔒 已逾前一日 21:00 登記截止時間 (已鎖定)' : '送出登記'}
                 </button>
               </form>
 
               <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs space-y-3">
-                <h4 className="text-xs font-bold text-zinc-700">我的近期申請紀錄</h4>
-                <div className="space-y-2 max-h-[360px] overflow-y-auto">
-                  {myRecs.map(r => (
-                    <div key={r.id} className="p-2.5 bg-zinc-50 rounded-lg border border-zinc-200 text-xs">
-                      <div className="flex justify-between font-bold">
-                        <span>{r.date}</span>
-                        <span className={
-                          r.type === 'attendance' ? 'text-emerald-700' :
-                          r.type === 'leave' ? 'text-amber-700' :
-                          'text-rose-700'
-                        }>
-                          {r.type === 'attendance' ? '留校實作' : r.type === 'leave' ? '請假' : '未請假'}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-zinc-500 font-mono mt-0.5">{r.slots.map(s => slotMap[s]).join(', ')}</div>
-                      {r.reason && <div className="text-[10px] text-zinc-400 italic">{r.type === 'unexcused' ? '備註：' : '事由：'}{r.reason}</div>}
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-zinc-700">我的近期申請紀錄</h4>
+                  <span className="text-[10px] text-zinc-400 font-mono">共 {myRecs.length} 筆</span>
+                </div>
+                <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
+                  {myRecs.length === 0 ? (
+                    <div className="text-center py-8 text-zinc-400 text-xs">
+                      目前尚無任何到校或請假紀錄
                     </div>
-                  ))}
+                  ) : (
+                    myRecs.map(r => {
+                      const locked = isAttendanceLocked(r.date);
+                      return (
+                        <div key={r.id} className="p-3 bg-zinc-50 hover:bg-white rounded-xl border border-zinc-200 transition-all text-xs space-y-2 shadow-2xs">
+                          <div className="flex items-center justify-between font-bold">
+                            <span className="text-zinc-900 font-mono text-xs">{r.date}</span>
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              r.type === 'attendance' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                              r.type === 'leave' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                              'bg-rose-100 text-rose-800 border border-rose-200'
+                            }`}>
+                              {r.type === 'attendance' ? '留校實作' : r.type === 'leave' ? '請假' : '未請假'}
+                            </span>
+                          </div>
+
+                          <div className="text-[11px] text-zinc-600 font-mono">
+                            時段：{r.slots.map(s => slotMap[s]).join(', ')}
+                          </div>
+
+                          {r.reason && (
+                            <div className="text-[10px] text-zinc-500 bg-white p-1.5 rounded border border-zinc-100 italic">
+                              {r.type === 'unexcused' ? '備註：' : '事由：'}{r.reason}
+                            </div>
+                          )}
+
+                          <div className="pt-2 border-t border-zinc-200/80 flex items-center justify-between text-[11px]">
+                            {locked ? (
+                              <div className="flex items-center gap-1 text-zinc-400 font-medium" title="已過前一日 21:00 截止時間，系統已鎖定無法自行取消">
+                                <Icon name="lock" className="w-3 h-3 text-zinc-400 flex-shrink-0" />
+                                <span>已逾時鎖定 (前一日 21:00 截止)</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1 text-emerald-600 font-medium">
+                                <Icon name="check" className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                                <span>可自行取消 (21:00前)</span>
+                              </div>
+                            )}
+
+                            {!locked && (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmCancelRecord(r)}
+                                className="px-2.5 py-1 text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg font-bold text-xs transition-colors flex items-center gap-1 shadow-2xs"
+                                title="取消此筆留校/請假申請"
+                              >
+                                <Icon name="trash" className="w-3 h-3" />
+                                <span>取消申請</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>
