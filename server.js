@@ -20,12 +20,18 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon',
 };
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+};
+
 const server = http.createServer((req, res) => {
   let reqPath = '/';
   try {
     reqPath = decodeURIComponent(req.url.split('?')[0]);
   } catch (e) {
-    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.writeHead(400, { ...SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('400 Bad Request');
     return;
   }
@@ -36,13 +42,13 @@ const server = http.createServer((req, res) => {
   const resolvedBase = path.resolve(__dirname);
   const filePath = path.resolve(resolvedBase, '.' + reqPath);
   if (!filePath.startsWith(resolvedBase + path.sep) && filePath !== resolvedBase) {
-    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.writeHead(403, { ...SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('403 Forbidden');
     return;
   }
   const relPath = path.relative(resolvedBase, filePath);
   if (relPath.split(path.sep).some(part => part.startsWith('.'))) {
-    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.writeHead(403, { ...SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('403 Forbidden');
     return;
   }
@@ -53,10 +59,10 @@ const server = http.createServer((req, res) => {
       const indexPath = path.join(__dirname, 'index.html');
       fs.readFile(indexPath, (readErr, content) => {
         if (readErr) {
-          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.writeHead(404, { ...SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' });
           res.end('404 Not Found');
         } else {
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'text/html; charset=utf-8' });
           res.end(content);
         }
       });
@@ -68,10 +74,10 @@ const server = http.createServer((req, res) => {
 
     fs.readFile(filePath, (readErr, content) => {
       if (readErr) {
-        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.writeHead(500, { ...SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('500 Internal Server Error');
       } else {
-        res.writeHead(200, { 'Content-Type': contentType });
+        res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': contentType });
         res.end(content);
       }
     });

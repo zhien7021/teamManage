@@ -7,6 +7,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <title>FRC 10114 隊務管理系統 | 錦和高中機器人校隊</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2318181b'/><circle cx='50' cy='50' r='30' stroke='%23f97316' stroke-width='10' fill='none'/><polygon points='40,35 70,50 40,65' fill='%23f97316'/></svg>" />
 
@@ -172,6 +174,15 @@
         return inp === s;
       }
 
+      function sanitizeAvatarUrl(url) {
+        if (!url || typeof url !== 'string') return undefined;
+        const trimmed = url.trim();
+        if (trimmed.startsWith('data:image/') || trimmed.startsWith('https://')) {
+          return trimmed;
+        }
+        return undefined;
+      }
+
       function encodeMembersForStorage(membersList) {
         if (!Array.isArray(membersList)) return [];
         return membersList.map(m => {
@@ -184,6 +195,11 @@
           if (out.address) out.address = encodeSecret(out.address);
           if (out.passportName) out.passportName = encodeSecret(out.passportName);
           if (out.birthDate) out.birthDate = encodeSecret(out.birthDate);
+          if (out.phone) out.phone = encodeSecret(out.phone);
+          if (out.email) out.email = encodeSecret(out.email);
+          if (out.guardianName) out.guardianName = encodeSecret(out.guardianName);
+          if (out.guardianPhone) out.guardianPhone = encodeSecret(out.guardianPhone);
+          if (out.avatar !== undefined) out.avatar = sanitizeAvatarUrl(out.avatar);
           return out;
         });
       }
@@ -202,6 +218,11 @@
             address: m.address ? decodeSecret(m.address) : m.address,
             passportName: m.passportName ? decodeSecret(m.passportName) : m.passportName,
             birthDate: m.birthDate ? decodeSecret(m.birthDate) : m.birthDate,
+            phone: m.phone ? decodeSecret(m.phone) : m.phone,
+            email: m.email ? decodeSecret(m.email) : m.email,
+            guardianName: m.guardianName ? decodeSecret(m.guardianName) : m.guardianName,
+            guardianPhone: m.guardianPhone ? decodeSecret(m.guardianPhone) : m.guardianPhone,
+            avatar: sanitizeAvatarUrl(m.avatar),
           };
           if (out._newPassword !== undefined) delete out._newPassword;
           return out;
@@ -1614,7 +1635,12 @@
         // Authentication & View
         const [isAuthenticated, setIsAuthenticated] = useState(() => {
           try {
-            return sessionStorage.getItem('frc10114_logged_in') === 'true';
+            if (sessionStorage.getItem('frc10114_logged_in') !== 'true') return false;
+            const r = sessionStorage.getItem('frc10114_role');
+            const memId = sessionStorage.getItem('frc10114_member_id');
+            const sig = sessionStorage.getItem('frc10114_session_sig');
+            if (!r || !memId || !sig) return false;
+            return sig === hashPassword(`${r}:${memId}:SESSION_SIG`);
           } catch (e) {
             return false;
           }
@@ -2059,6 +2085,10 @@
 
         // Handle Add New Admin Coach
         const handleCreateAdmin = (adminData) => {
+          if (currentRole !== 'admin') {
+            showToast('權限不足', '僅限管理員可建立教練帳號', 'error');
+            return false;
+          }
           const newAdmin = {
             id: adminData.id.trim(),
             name: adminData.name.trim(),
@@ -2227,12 +2257,10 @@
           }
           try {
             const sig = sessionStorage.getItem('frc10114_session_sig');
-            const memId = sessionStorage.getItem('frc10114_member_id') || currentMember?.id || '';
-            const roleInStorage = sessionStorage.getItem('frc10114_role') || currentRole;
+            const memId = sessionStorage.getItem('frc10114_member_id') || '';
+            const roleInStorage = sessionStorage.getItem('frc10114_role') || '';
             const expectedSig = hashPassword(`${ currentRole }:${ currentMember?.id || '' }:SESSION_SIG`);
-            if (!sig) {
-              sessionStorage.setItem('frc10114_session_sig', expectedSig);
-            } else if (roleInStorage !== currentRole || sig !== hashPassword(`${ roleInStorage }:${ memId }:SESSION_SIG`)) {
+            if (!sig || roleInStorage !== currentRole || memId !== (currentMember?.id || '') || sig !== expectedSig) {
               setIsAuthenticated(false);
               sessionStorage.removeItem('frc10114_logged_in');
               sessionStorage.removeItem('frc10114_role');
@@ -2291,6 +2319,10 @@
         };
 
         const handleSaveDraft = () => {
+          if (currentRole !== 'admin') {
+            showToast('權限不足', '僅限管理員可修改隊員名冊', 'error');
+            return;
+          }
           if (!draftMember.name.trim() || !draftMember.id.trim()) {
             showToast('儲存失敗', '姓名與編號不得為空', 'error');
             return;
@@ -2326,11 +2358,22 @@
             showToast('儲存失敗', '姓名不得為空', 'error');
             return false;
           }
-          const nextMembers = members.map(m => m.id === updatedProfile.id ? { ...m, ...updatedProfile } : m);
+          if (currentRole !== 'admin' && updatedProfile.id !== currentMember?.id) {
+            showToast('權限不足', '您只能修改自己的個人資料', 'error');
+            return false;
+          }
+          let safeUpdated = { ...updatedProfile };
+          const nextMembers = members.map(m => {
+            if (m.id !== updatedProfile.id) return m;
+            if (currentRole !== 'admin') {
+              safeUpdated = { ...updatedProfile, role: m.role, departments: m.departments };
+            }
+            return { ...m, ...safeUpdated };
+          });
           setMembers(nextMembers);
-          setCurrentMember(prev => ({ ...prev, ...updatedProfile }));
+          setCurrentMember(prev => ({ ...prev, ...safeUpdated }));
           if (draftMember && draftMember.id === updatedProfile.id) {
-            setDraftMember(prev => ({ ...prev, ...updatedProfile }));
+            setDraftMember(prev => ({ ...prev, ...safeUpdated }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
@@ -2340,6 +2383,7 @@
 
         const handleSaveMotto = (memberIdOrMotto, maybeMotto) => {
           const targetId = maybeMotto !== undefined ? memberIdOrMotto : (currentMember ? currentMember.id : '');
+          if (currentRole !== 'admin' && targetId !== currentMember?.id) return;
           const newMotto = (maybeMotto !== undefined ? maybeMotto : memberIdOrMotto) || '';
           const trimmedMotto = typeof newMotto === 'string' ? newMotto.trim() : '';
 
@@ -2358,6 +2402,7 @@
 
         // 學習集章 (tasks) - Verify, Add, Delete
         const handleVerifyTask = (taskId, studentName, taskName) => {
+          if (currentRole !== 'admin') return;
           const now = new Date();
           const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
           const nextTasks = tasks.map(t => t.id === taskId ? { ...t, status: 'completed', verifiedAt: dateStr, verifiedBy: currentMember.name || '許教練' } : t);
@@ -2368,6 +2413,7 @@
         };
 
         const handleAddTask = (taskOrTasks) => {
+          if (currentRole !== 'admin') return;
           const taskList = Array.isArray(taskOrTasks) ? taskOrTasks : [taskOrTasks];
           const now = Date.now();
           const newTasks = taskList.map((item, idx) => ({
@@ -2387,6 +2433,7 @@
         };
 
         const handleDeleteTask = (taskId, studentName, taskName) => {
+          if (currentRole !== 'admin') return;
           if (window.confirm(`確定要刪除隊員「${studentName}」的「${taskName}」學習集章任務嗎？`)) {
             const nextTasks = tasks.filter(t => t.id !== taskId);
             setTasks(nextTasks);
@@ -2397,6 +2444,7 @@
         };
 
         const handleBatchVerifyTask = (taskIds, taskName) => {
+          if (currentRole !== 'admin') return;
           const now = new Date();
           const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
           const nextTasks = tasks.map(t =>
@@ -2411,6 +2459,7 @@
         };
 
         const handleDeleteTaskGroup = (taskName, department) => {
+          if (currentRole !== 'admin') return;
           if (window.confirm(`確定要刪除「${taskName}」(${department}) 整項考核任務與所屬所有隊員紀錄嗎？`)) {
             const nextTasks = tasks.filter(t => !(t.taskName === taskName && t.department === department));
             setTasks(nextTasks);
@@ -2422,6 +2471,7 @@
 
         // 工作任務清單 (pendingTasks) - Add, Delete, Toggle, Claim, Release, Unassign, Reassign
         const handleAddPendingTask = (newTask) => {
+          if (currentRole !== 'admin') return;
           const now = new Date();
           const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
           const timeStr = `${dateStr} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -2448,6 +2498,7 @@
         };
 
         const handleDeletePendingTask = (taskId, title) => {
+          if (currentRole !== 'admin') return;
           if (window.confirm(`確定要刪除工作任務「${title}」嗎？`)) {
             const next = pendingTasks.filter(t => t.id !== taskId);
             setPendingTasks(next);
@@ -2535,6 +2586,7 @@
 
         // Admin clears task assignee (unassign / release)
         const handleUnassignPendingTask = (taskId) => {
+          if (currentRole !== 'admin') return;
           let targetTitle = '';
           const next = pendingTasks.map(t => {
             if (t.id !== taskId) return t;
@@ -2556,6 +2608,7 @@
 
         // Admin reassigns task to a specific student
         const handleReassignPendingTask = (taskId, targetStudentId) => {
+          if (currentRole !== 'admin') return;
           const targetStudent = members.find(m => m.id === targetStudentId);
           if (!targetStudent) return;
           const now = new Date();
@@ -2588,6 +2641,7 @@
         };
 
         const handleExportMembersList = () => {
+          if (currentRole !== 'admin') return;
           const headers = [
             '隊員編號 (學號)',
             '姓名',
@@ -2629,20 +2683,27 @@
         };
 
         const handleUpdateMemberAvatar = (memberId, avatarDataUrl) => {
-          const nextMembers = members.map(m => m.id === memberId ? { ...m, avatar: avatarDataUrl } : m);
+          if (currentRole !== 'admin' && memberId !== currentMember?.id) return;
+          const safeAvatar = sanitizeAvatarUrl(avatarDataUrl);
+          if (!safeAvatar) {
+            showToast('頭貼格式無效', '僅支援安全的圖片格式', 'error');
+            return;
+          }
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, avatar: safeAvatar } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
-            setCurrentMember(prev => ({ ...prev, avatar: avatarDataUrl }));
+            setCurrentMember(prev => ({ ...prev, avatar: safeAvatar }));
           }
           if (draftMember && draftMember.id === memberId) {
-            setDraftMember(prev => ({ ...prev, avatar: avatarDataUrl }));
+            setDraftMember(prev => ({ ...prev, avatar: safeAvatar }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
           showToast('個人頭貼已更新', '頭貼相片已成功儲存！', 'success');
         };
 
         const handleRemoveMemberAvatar = (memberId) => {
+          if (currentRole !== 'admin' && memberId !== currentMember?.id) return;
           const nextMembers = members.map(m => m.id === memberId ? { ...m, avatar: undefined } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
@@ -2651,7 +2712,7 @@
           if (draftMember && draftMember.id === memberId) {
             setDraftMember(prev => ({ ...prev, avatar: undefined }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
           showToast('已移除個人頭貼', '已還原為姓氏字母頭像', 'info');
         };
