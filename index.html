@@ -2787,6 +2787,12 @@
         };
 
         const handleCancelMachineReservation = (resId, machine, slot) => {
+          const targetRes = machineReservations.find(r => r.id === resId);
+          if (!targetRes) return;
+          if (currentRole !== 'admin' && targetRes.studentId !== currentMember?.id && targetRes.studentName !== currentMember?.name) {
+            showToast('權限不足', '您只能取消自己預約的機具時段', 'error');
+            return;
+          }
           const next = machineReservations.filter(r => r.id !== resId);
           setMachineReservations(next);
           try { localStorage.setItem('frc10114_reservations', JSON.stringify(next)); } catch (e) {}
@@ -2822,8 +2828,9 @@
           showToast('設備已歸還', `「${itemName}」已歸還，恢復為空著可借用狀態`, 'info');
         };
 
-        // Educational Equipment Categories & Quantity Management
+        // Educational Equipment Categories & Quantity Management (Admin Only)
         const handleAddEduCategory = (newCat, initialCount = 0, namePattern = '') => {
+          if (currentRole !== 'admin') return;
           let nextCats = eduCategories;
           if (!eduCategories.some(c => c.id === newCat.id)) {
             nextCats = [...eduCategories, newCat];
@@ -2853,6 +2860,7 @@
         };
 
         const handleDeleteEduCategory = (categoryId) => {
+          if (currentRole !== 'admin') return;
           const nextCats = eduCategories.filter(c => c.id !== categoryId);
           const nextEq = eduEquipment.filter(e => e.category !== categoryId);
           setEduCategories(nextCats);
@@ -2864,6 +2872,7 @@
         };
 
         const handleAdjustEduQuantity = (categoryId, targetCount, catPrefix, catName) => {
+          if (currentRole !== 'admin') return;
           const currentCatItems = eduEquipment.filter(e => e.category === categoryId);
           const currentCount = currentCatItems.length;
 
@@ -2912,6 +2921,7 @@
         };
 
         const handleAddEduItem = (newItem) => {
+          if (currentRole !== 'admin') return;
           const next = [...eduEquipment, newItem];
           setEduEquipment(next);
           try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
@@ -2920,6 +2930,7 @@
         };
 
         const handleUpdateEduItem = (itemId, updatedFields) => {
+          if (currentRole !== 'admin') return;
           const sanitized = { ...updatedFields };
           if (sanitized.status === 'available') {
             sanitized.borrowedBy = '';
@@ -2937,6 +2948,7 @@
         };
 
         const handleDeleteEduItem = (itemId, itemName) => {
+          if (currentRole !== 'admin') return;
           const next = eduEquipment.filter(e => e.id !== itemId);
           setEduEquipment(next);
           try { localStorage.setItem('frc10114_eduequipment', JSON.stringify(next)); } catch (e) {}
@@ -3878,7 +3890,7 @@
                   savedIds={customSavedEventIds}
                   onShowToast={showToast}
                   onUpdateEvent={(updatedEv) => {
-                    const next = events.map(e => e.id === updatedEv.id ? { ...e, ...updatedEv } : e);
+                    const next = events.map(e => e.id === updatedEv.id ? { ...e, attendees: Array.isArray(updatedEv.attendees) ? updatedEv.attendees : e.attendees } : e);
                     setEvents(next);
                     try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
                     syncToCloud({ events: next });
@@ -3925,15 +3937,22 @@
                   onSubmitRecord={(rec) => {
                     const now = new Date();
                     const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                    const newRec = { ...rec, id: `att-${Date.now()}`, submittedAt: timeStr };
-                    const filtered = attendance.filter(r => !(r.studentId === rec.studentId && r.date === rec.date));
+                    const safeRec = { ...rec, studentId: currentMember.id, studentName: currentMember.name };
+                    const newRec = { ...safeRec, id: `att-${Date.now()}`, submittedAt: timeStr };
+                    const filtered = attendance.filter(r => !(r.studentId === safeRec.studentId && r.date === safeRec.date));
                     const next = [newRec, ...filtered];
                     setAttendance(next);
                     try { localStorage.setItem('frc10114_attendance', JSON.stringify(next)); } catch (e) {}
                     syncToCloud({ attendance: next });
-                    showToast('申請送出成功！', `已登記 ${rec.date} 之時段，即刻同步至管理員與家長週表。`, 'success');
+                    showToast('申請送出成功！', `已登記 ${safeRec.date} 之時段，即刻同步至管理員與家長週表。`, 'success');
                   }}
                   onCancelRecord={(recId, dateStr, typeText) => {
+                    const targetRec = attendance.find(r => r.id === recId);
+                    if (!targetRec) return;
+                    if (currentRole !== 'admin' && targetRec.studentId !== currentMember?.id && targetRec.studentName !== currentMember?.name) {
+                      showToast('權限不足', '您只能取消自己的出勤或請假紀錄', 'error');
+                      return;
+                    }
                     const next = attendance.filter(r => r.id !== recId);
                     setAttendance(next);
                     try { localStorage.setItem('frc10114_attendance', JSON.stringify(next)); } catch (e) {}
@@ -3974,7 +3993,7 @@
                   savedIds={customSavedEventIds}
                   onShowToast={showToast}
                   onUpdateEvent={(updatedEv) => {
-                    const next = events.map(e => e.id === updatedEv.id ? { ...e, ...updatedEv } : e);
+                    const next = events.map(e => e.id === updatedEv.id ? { ...e, attendees: Array.isArray(updatedEv.attendees) ? updatedEv.attendees : e.attendees } : e);
                     setEvents(next);
                     try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
                     syncToCloud({ events: next });
@@ -8894,6 +8913,11 @@
             setTimeout(() => setWebhookNotice(''), 4000);
             return;
           }
+          if (!/^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec(\?.*)?$/.test(url)) {
+            setWebhookNotice('⚠️ 安全攔截：僅允許發送至官方 Google Apps Script 網址 (https://script.google.com/macros/s/.../exec)');
+            setTimeout(() => setWebhookNotice(''), 5000);
+            return;
+          }
           setIsSendingWebhook(true);
           setWebhookNotice('');
           try {
@@ -12861,12 +12885,22 @@
         const handleImportFile = (e) => {
           const file = e.target.files?.[0];
           if (!file) return;
+          if (file.size > 10 * 1024 * 1024) {
+            alert('備份檔案過大（超過 10MB 上限），請確認檔案是否正確！');
+            e.target.value = '';
+            return;
+          }
 
           const reader = new FileReader();
           reader.onload = (event) => {
             try {
-              const parsed = JSON.parse(event.target.result);
-              if (!parsed.data && !parsed.members) {
+              const parsed = JSON.parse(event.target.result, (key, value) => {
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                  return undefined;
+                }
+                return value;
+              });
+              if (!parsed || (!parsed.data && !parsed.members)) {
                 alert('無效的備份檔格式！');
                 return;
               }
@@ -13557,7 +13591,7 @@
                         <div className="w-6 h-6 rounded-full bg-zinc-900 text-white font-bold flex items-center justify-center flex-shrink-0 text-xs">1</div>
                         <div>
                           <p className="font-bold text-zinc-900">建立 Firebase 專案</p>
-                          <p className="text-[11px] text-zinc-500">前往 <a href="https://console.firebase.google.com" target="_blank" rel="noreferrer" className="text-orange-600 underline font-bold">firebase.google.com</a> 登入 Google 帳號，點擊「新增專案」，輸入專案名稱（如 FRC10114）。</p>
+                          <p className="text-[11px] text-zinc-500">前往 <a href="https://console.firebase.google.com" target="_blank" rel="noopener noreferrer" className="text-orange-600 underline font-bold">firebase.google.com</a> 登入 Google 帳號，點擊「新增專案」，輸入專案名稱（如 FRC10114）。</p>
                         </div>
                       </div>
 
