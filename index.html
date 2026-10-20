@@ -88,6 +88,85 @@
     <script type="text/babel">
       const { useState, useEffect, useMemo } = React;
 
+      // --- 0. SECURITY & SECRET OBFUSCATION HELPERS ---
+      const SEC_SALT = 'FRC10114_SEC_2026_KEY';
+      const DEFAULT_ADMIN_ENC = 'enc$66523d6e89fc9eb33f15';
+      const DEFAULT_MEMBER_ENC = 'enc$66523d6e89';
+
+      function encodeSecret(plain) {
+        if (!plain) return '';
+        const str = String(plain);
+        if (str.startsWith('enc$')) return str;
+        try {
+          const bytes = new TextEncoder().encode(str);
+          const saltBytes = new TextEncoder().encode(SEC_SALT);
+          let hex = '';
+          for (let i = 0; i < bytes.length; i++) {
+            const b = (bytes[i] ^ saltBytes[i % saltBytes.length] ^ ((i * 31 + 17) & 0xff)) & 0xff;
+            hex += b.toString(16).padStart(2, '0');
+          }
+          return 'enc$' + hex;
+        } catch (e) {
+          return str;
+        }
+      }
+
+      function decodeSecret(stored) {
+        if (!stored) return '';
+        const str = String(stored);
+        if (!str.startsWith('enc$')) return str;
+        try {
+          const hex = str.slice(4);
+          const saltBytes = new TextEncoder().encode(SEC_SALT);
+          const out = new Uint8Array(hex.length / 2);
+          for (let i = 0; i < out.length; i++) {
+            const b = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+            out[i] = (b ^ saltBytes[i % saltBytes.length] ^ ((i * 31 + 17) & 0xff)) & 0xff;
+          }
+          return new TextDecoder().decode(out);
+        } catch (e) {
+          return str;
+        }
+      }
+
+      function verifySecret(input, stored) {
+        if (!input && !stored) return true;
+        return String(input) === decodeSecret(stored);
+      }
+
+      function encodeMembersForStorage(membersList) {
+        if (!Array.isArray(membersList)) return [];
+        return membersList.map(m => {
+          if (!m) return m;
+          const out = { ...m };
+          if (out.password) out.password = encodeSecret(out.password);
+          if (out.parentPassword) out.parentPassword = encodeSecret(out.parentPassword);
+          if (out.nationalId) out.nationalId = encodeSecret(out.nationalId);
+          if (out.address) out.address = encodeSecret(out.address);
+          if (out.passportName) out.passportName = encodeSecret(out.passportName);
+          if (out.birthDate) out.birthDate = encodeSecret(out.birthDate);
+          return out;
+        });
+      }
+
+      function normalizeMembersFromStorage(membersList) {
+        if (!Array.isArray(membersList)) return [];
+        return membersList.map(m => {
+          if (!m) return m;
+          const role = m.role || (m.id === '10114-001' || (m.id && m.id.includes('-A')) ? 'admin' : 'member');
+          return {
+            ...m,
+            role,
+            password: encodeSecret(m.password || (role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
+            parentPassword: m.parentPassword ? encodeSecret(m.parentPassword) : undefined,
+            nationalId: m.nationalId ? decodeSecret(m.nationalId) : m.nationalId,
+            address: m.address ? decodeSecret(m.address) : m.address,
+            passportName: m.passportName ? decodeSecret(m.passportName) : m.passportName,
+            birthDate: m.birthDate ? decodeSecret(m.birthDate) : m.birthDate,
+          };
+        });
+      }
+
       // --- 1. SEED DATA SPECIFICATION ---
       const INITIAL_MEMBERS = [
         {
@@ -100,7 +179,7 @@
           motto: '培育卓越工程師，傳承 10114 堅持不懈的機器人精神！',
           phone: '0912-345-678',
           role: 'admin',
-          password: '10114admin',
+          password: DEFAULT_ADMIN_ENC,
           englishName: 'Coach Hsu',
           passportName: 'HSU, CHIA-CHENG',
           birthDate: '1985-06-18',
@@ -119,7 +198,7 @@
           motto: '堅持熱愛，讓一行行程式與機構在賽場上精準綻放！',
           phone: '0988-111-222',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
           englishName: 'Enxuan',
           passportName: 'LIN, EN-HSUAN',
           birthDate: '2008-07-15',
@@ -138,7 +217,7 @@
           motto: '結構穩定是一切的基石，一顆螺絲都不能鬆動！',
           phone: '0977-333-444',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
           englishName: 'Xiao-Ming',
           passportName: 'WANG, HSIAO-MING',
           birthDate: '2008-11-20',
@@ -157,7 +236,7 @@
           motto: '挑戰極致演算法，寫出全場最流暢的自主移動軌跡。',
           phone: '0966-555-666',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
           englishName: 'David',
           passportName: 'CHEN, TA-MING',
           birthDate: '2008-03-08',
@@ -176,7 +255,7 @@
           motto: '傳遞科技熱情，讓世界聽見新北錦和 10114 的熱血故事。',
           phone: '0955-777-888',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
           englishName: 'Sunny',
           passportName: 'ZHANG, YONG-QING',
           birthDate: '2009-01-25',
@@ -195,7 +274,7 @@
           motto: '工廠加工與企業公關雙修，做最全面的 FIRST 創作者！',
           phone: '0933-888-999',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
           englishName: 'Hanna',
           passportName: 'LIAO, TZU-HAN',
           birthDate: '2008-09-12',
@@ -213,7 +292,7 @@
           departments: ['機電整合組'],
           motto: '細心組裝機構，打造最強壯的機器人！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-021',
@@ -224,7 +303,7 @@
           departments: ['機電整合組', '程式控制組'],
           motto: '帶領學弟妹衝擊第一名！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-022',
@@ -235,7 +314,7 @@
           departments: ['行銷管理組'],
           motto: '記錄每一刻團隊的感動與熱血！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-023',
@@ -246,7 +325,7 @@
           departments: ['程式控制組'],
           motto: '自走期精準路徑規劃是勝利關鍵。',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-024',
@@ -257,7 +336,7 @@
           departments: ['機電整合組'],
           motto: '結構輕量化與極致耐用！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-025',
@@ -268,7 +347,7 @@
           departments: ['程式控制組'],
           motto: '底盤驅動與視覺對位零誤差！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-026',
@@ -279,7 +358,7 @@
           departments: ['機電整合組'],
           motto: '精益求精，做好每一個零件！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-027',
@@ -290,7 +369,7 @@
           departments: ['行銷管理組'],
           motto: '向世界分享錦和 10114 的榮耀！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-028',
@@ -301,7 +380,7 @@
           departments: ['機電整合組'],
           motto: '快速換刀銑削，全力支援加工！',
           role: 'member',
-          password: '10114',
+          password: DEFAULT_MEMBER_ENC,
         },
       ];
 
@@ -1405,16 +1484,12 @@
             const s = localStorage.getItem('frc10114_members');
             if (s) {
               const list = JSON.parse(s);
-              return list.map(m => ({
-                ...m,
-                role: m.role || (m.id === '10114-001' || (m.id && m.id.includes('-A')) ? 'admin' : 'member'),
-                password: m.password || (m.role === 'admin' || m.id === '10114-001' ? '10114admin' : '10114'),
-              }));
+              return normalizeMembersFromStorage(list);
             }
           } catch (e) {
             console.error(e);
           }
-          return INITIAL_MEMBERS;
+          return normalizeMembersFromStorage(INITIAL_MEMBERS);
         });
 
         const [events, setEvents] = useState(() => {
@@ -1579,7 +1654,7 @@
         };
 
         // Sync to LocalStorage
-        useEffect(() => { localStorage.setItem('frc10114_members', JSON.stringify(members)); }, [members]);
+        useEffect(() => { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(members))); }, [members]);
         useEffect(() => { localStorage.setItem('frc10114_events', JSON.stringify(events)); }, [events]);
         useEffect(() => { localStorage.setItem('frc10114_tasks', JSON.stringify(tasks)); }, [tasks]);
         useEffect(() => { localStorage.setItem('frc10114_pending_tasks', JSON.stringify(pendingTasks)); }, [pendingTasks]);
@@ -1669,11 +1744,12 @@
                 if (data && data.updatedBy !== clientIdRef.current) {
                   isRemoteUpdateRef.current = true;
                   if (data.members && Array.isArray(data.members)) {
-                    setMembers(data.members);
-                    try { localStorage.setItem('frc10114_members', JSON.stringify(data.members)); } catch (e) {}
+                    const normalizedRemoteMembers = normalizeMembersFromStorage(data.members);
+                    setMembers(normalizedRemoteMembers);
+                    try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normalizedRemoteMembers))); } catch (e) {}
                     setCurrentMember(prev => {
                       if (!prev) return prev;
-                      const remoteCurrent = data.members.find(m => m.id === prev.id);
+                      const remoteCurrent = normalizedRemoteMembers.find(m => m.id === prev.id);
                       return remoteCurrent ? { ...prev, ...remoteCurrent } : prev;
                     });
                   }
@@ -1743,7 +1819,7 @@
             // Case 1: Full Document Push (Explicit initial seed or manual override)
             if (!overrideData) {
               const fullPayload = {
-                members,
+                members: encodeMembersForStorage(members),
                 events,
                 tasks,
                 pendingTasks,
@@ -1779,9 +1855,10 @@
                 };
 
                 for (const key of Object.keys(overrideData)) {
-                  const nextVal = overrideData[key];
+                  const rawNextVal = overrideData[key];
+                  const nextVal = key === 'members' ? encodeMembersForStorage(rawNextVal) : rawNextVal;
                   const remoteVal = remoteDoc[key];
-                  const prevVal = prevSnapshot[key];
+                  const prevVal = key === 'members' ? encodeMembersForStorage(prevSnapshot[key]) : prevSnapshot[key];
 
                   if (Array.isArray(nextVal) && Array.isArray(remoteVal)) {
                     txPayload[key] = smartMergeField(key, remoteVal, prevVal, nextVal);
@@ -1820,8 +1897,9 @@
                       setMaterials(mergedVal);
                       try { localStorage.setItem('frc10114_materials', JSON.stringify(mergedVal)); } catch (e) {}
                     } else if (key === 'members') {
-                      setMembers(mergedVal);
-                      try { localStorage.setItem('frc10114_members', JSON.stringify(mergedVal)); } catch (e) {}
+                      const normMerged = normalizeMembersFromStorage(mergedVal);
+                      setMembers(normMerged);
+                      try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normMerged))); } catch (e) {}
                     } else if (key === 'eduCategories') {
                       setEduCategories(mergedVal);
                       try { localStorage.setItem('frc10114_edu_categories', JSON.stringify(mergedVal)); } catch (e) {}
@@ -1835,8 +1913,12 @@
             } catch (txErr) {
               console.warn('Transaction failed, falling back to granular doc set:', txErr);
               // Fallback: Direct granular update without touching other modules
+              const fallbackOverride = { ...overrideData };
+              if (fallbackOverride.members) {
+                fallbackOverride.members = encodeMembersForStorage(fallbackOverride.members);
+              }
               const fallbackPayload = {
-                ...overrideData,
+                ...fallbackOverride,
                 updatedAt: nowTs,
                 updatedBy: clientIdRef.current,
               };
@@ -1875,7 +1957,7 @@
             (draftMember.motto || '') !== (originalMember.motto || '') ||
             (draftMember.phone || '') !== (originalMember.phone || '') ||
             (draftMember.avatar || '') !== (originalMember.avatar || '') ||
-            (draftMember.password || '') !== (originalMember.password || '') ||
+            decodeSecret(draftMember.password || '') !== decodeSecret(originalMember.password || '') ||
             (draftMember.role || 'member') !== (originalMember.role || 'member') ||
             (draftMember.englishName || '') !== (originalMember.englishName || '') ||
             (draftMember.passportName || '') !== (originalMember.passportName || '') ||
@@ -1936,7 +2018,7 @@
             departments: adminData.departments && adminData.departments.length > 0 ? adminData.departments : ['機電整合組', '程式控制組', '行銷管理組'],
             motto: adminData.motto || '用心傳承，帶領 FRC 10114 勇闖巔峰！',
             role: 'admin',
-            password: adminData.password || '10114admin',
+            password: encodeSecret(adminData.password || DEFAULT_ADMIN_ENC),
           };
           if (!newAdmin.name || !newAdmin.id) {
             showToast('建立失敗', '姓名與編號為必填項目', 'error');
@@ -1949,7 +2031,7 @@
           const next = [newAdmin, ...members];
           setMembers(next);
           setSelectedMemberId(newAdmin.id);
-          try { localStorage.setItem('frc10114_members', JSON.stringify(next)); } catch (e) {}
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(next))); } catch (e) {}
           syncToCloud({ members: next });
           setIsAddAdminModalOpen(false);
           showToast('管理員建立成功！', `已新增「${newAdmin.name}」為管理員教練`, 'success');
@@ -1960,8 +2042,8 @@
         const handleUpdatePassword = (memberId, oldPass, newPass) => {
           const target = members.find(m => m.id === memberId);
           if (!target) return false;
-          const currentPass = target.password || (target.role === 'admin' || target.id === '10114-001' ? '10114admin' : '10114');
-          if (oldPass !== currentPass) {
+          const currentPass = target.password || (target.role === 'admin' || target.id === '10114-001' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC);
+          if (!verifySecret(oldPass, currentPass)) {
             showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
             return false;
           }
@@ -1969,16 +2051,16 @@
             showToast('密碼變更失敗', '新密碼長度至少需 4 個字元', 'warning');
             return false;
           }
-          const trimmed = newPass.trim();
-          const nextMembers = members.map(m => m.id === memberId ? { ...m, password: trimmed } : m);
+          const encodedPass = encodeSecret(newPass.trim());
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, password: encodedPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
-            setCurrentMember(prev => ({ ...prev, password: trimmed }));
+            setCurrentMember(prev => ({ ...prev, password: encodedPass }));
           }
           if (draftMember && draftMember.id === memberId) {
-            setDraftMember(prev => ({ ...prev, password: trimmed }));
+            setDraftMember(prev => ({ ...prev, password: encodedPass }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
           showToast('密碼已成功更新！', '請牢記您的新密碼', 'success');
           return true;
@@ -1991,25 +2073,25 @@
             showToast('找不到學生資料', '無法變更家長密碼', 'error');
             return false;
           }
-          const currentPass = target.parentPassword || target.password || '10114';
-          if (oldPass !== currentPass) {
-            showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試（預設密碼為 10114）', 'error');
+          const currentPass = target.parentPassword || target.password || DEFAULT_MEMBER_ENC;
+          if (!verifySecret(oldPass, currentPass)) {
+            showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
             return false;
           }
           if (!newPass || newPass.trim().length < 4) {
             showToast('密碼變更失敗', '新密碼長度至少需 4 個字元', 'warning');
             return false;
           }
-          const trimmed = newPass.trim();
-          const nextMembers = members.map(m => m.id === studentId ? { ...m, parentPassword: trimmed } : m);
+          const encodedPass = encodeSecret(newPass.trim());
+          const nextMembers = members.map(m => m.id === studentId ? { ...m, parentPassword: encodedPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === studentId) {
-            setCurrentMember(prev => ({ ...prev, parentPassword: trimmed }));
+            setCurrentMember(prev => ({ ...prev, parentPassword: encodedPass }));
           }
           if (draftMember && draftMember.id === studentId) {
-            setDraftMember(prev => ({ ...prev, parentPassword: trimmed }));
+            setDraftMember(prev => ({ ...prev, parentPassword: encodedPass }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
           showToast('家長安全密碼變更成功！', '請牢記您的新密碼，下次登入家長通道時請使用新密碼', 'success');
           return true;
@@ -2083,17 +2165,21 @@
             showToast('儲存失敗', '請至少勾選一個組別', 'warning');
             return;
           }
+          const normalizedDraft = {
+            ...draftMember,
+            password: encodeSecret(draftMember.password || (draftMember.role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
+          };
           const nextMembers = members.map(m =>
-            (m.id === selectedMemberId || m.id === draftMember.id) ? draftMember : m
+            (m.id === selectedMemberId || m.id === normalizedDraft.id) ? normalizedDraft : m
           );
           setMembers(nextMembers);
-          if (currentMember.id === selectedMemberId || currentMember.id === draftMember.id) {
-            setCurrentMember(draftMember);
+          if (currentMember.id === selectedMemberId || currentMember.id === normalizedDraft.id) {
+            setCurrentMember(normalizedDraft);
           }
-          setSelectedMemberId(draftMember.id);
-          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          setSelectedMemberId(normalizedDraft.id);
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('資料儲存成功', `隊員「${draftMember.name}」已更新並即時同步至雲端！`, 'success');
+          showToast('資料儲存成功', `隊員「${normalizedDraft.name}」已更新並即時同步至雲端！`, 'success');
         };
 
         const handleUpdateProfile = (updatedProfile) => {
@@ -2107,7 +2193,7 @@
           if (draftMember && draftMember.id === updatedProfile.id) {
             setDraftMember(prev => ({ ...prev, ...updatedProfile }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
           showToast('個人資料儲存成功！', '您的資料與理念已即時同步至雲端', 'success');
           return true;
@@ -2126,7 +2212,7 @@
           if (draftMember && draftMember.id === targetId) {
             setDraftMember(prev => ({ ...prev, motto: trimmedMotto }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(nextMembers)); } catch (e) {}
+          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
           showToast('座右銘已儲存', '隨時提醒自己當初加入 FRC 時的初心！', 'success');
         };
@@ -2917,7 +3003,7 @@
                             departments: ['機電整合組'],
                             motto: '熱愛工程，追求突破！',
                             role: 'member',
-                            password: '10114',
+                            password: DEFAULT_MEMBER_ENC,
                             englishName: '',
                             passportName: '',
                             birthDate: '',
@@ -2929,7 +3015,7 @@
                           const next = [...members, newM];
                           setMembers(next);
                           setSelectedMemberId(newM.id);
-                          try { localStorage.setItem('frc10114_members', JSON.stringify(next)); } catch (e) {}
+                          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(next))); } catch (e) {}
                           syncToCloud({ members: next });
                           showToast('已建立新隊員', `隊員 ${newM.id} 已加入名單，請於右方編輯完整資料`, 'success');
                         }}
@@ -3394,13 +3480,14 @@
                               <div className="flex items-center justify-between mb-1">
                                 <label className="text-xs font-bold text-zinc-700">登入密碼 (可直接修改或重設)</label>
                                 <span className="text-[10px] text-zinc-400">
-                                  {draftMember.role === 'admin' ? '管理員預設：10114admin' : '隊員預設：10114'}
+                                  已啟用安全遮罩與加密保護
                                 </span>
                               </div>
                               <input
-                                type="text"
-                                value={draftMember.password || (draftMember.role === 'admin' ? '10114admin' : '10114')}
-                                onChange={(e) => setDraftMember({ ...draftMember, password: e.target.value })}
+                                type="password"
+                                value={decodeSecret(draftMember.password || (draftMember.role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC))}
+                                onChange={(e) => setDraftMember({ ...draftMember, password: encodeSecret(e.target.value) })}
+                                placeholder="輸入新密碼以重設"
                                 className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                               />
                               <p className="text-[10px] text-zinc-400 mt-1">變更後點擊下方「儲存正式名冊」即生效，隊員/教練便可使用新密碼登入系統。</p>
@@ -10139,7 +10226,7 @@
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs font-bold text-zinc-700">舊密碼 *</label>
                       <span className="text-[10px] text-zinc-400">
-                        {member.role === 'admin' ? '預設 10114admin' : '預設 10114'}
+                        請輸入目前使用之密碼
                       </span>
                     </div>
                     <div className="relative">
@@ -11682,7 +11769,7 @@
           setPassErr('');
           setPassSuccess('');
           if (!oldPass) {
-            setPassErr('請輸入目前使用的家長通關密碼（預設為 10114）');
+            setPassErr('請輸入目前使用的家長通關密碼');
             return;
           }
           if (!newPass || newPass.trim().length < 4) {
@@ -11702,7 +11789,7 @@
               setPassSuccess('✅ 家長安全密碼已成功更新！下次登入時請使用新密碼。');
               setTimeout(() => setPassSuccess(''), 6000);
             } else {
-              setPassErr('舊密碼不正確，請確認後重試（預設為 10114）');
+              setPassErr('舊密碼不正確，請確認後重試');
             }
           }
         };
@@ -11848,7 +11935,7 @@
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-zinc-900">修改家長專屬安全通關密碼</h3>
-                      <p className="text-[11px] text-zinc-400">登入家長專區時使用，預設為 10114，修改後將即時同步至雲端</p>
+                      <p className="text-[11px] text-zinc-400">登入家長專區時使用，修改後將即時加密同步至雲端</p>
                     </div>
                   </div>
                   <button
@@ -11881,7 +11968,7 @@
                         type={showOldPass ? "text" : "password"}
                         value={oldPass}
                         onChange={(e) => setOldPass(e.target.value)}
-                        placeholder="預設為 10114"
+                        placeholder="請輸入目前密碼"
                         className="w-full px-3 py-2 border border-zinc-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-orange-500 pr-8"
                       />
                       <button
@@ -12929,7 +13016,7 @@
         });
         const [email, setEmail] = useState('');
         const [phone, setPhone] = useState('');
-        const [password, setPassword] = useState('10114admin');
+        const [password, setPassword] = useState('');
         const [showPassword, setShowPassword] = useState(false);
         const [departments, setDepartments] = useState(['機電整合組', '程式控制組', '行銷管理組']);
         const [motto, setMotto] = useState('熱愛工程教育，培育新一代頂尖機器人人才！');
@@ -13062,7 +13149,7 @@
                       type={showPassword ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="請輸入密碼（預設 10114admin）"
+                      placeholder="請設定管理員登入密碼 (至少 4 碼)"
                       className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                     />
                     <button
@@ -13552,9 +13639,9 @@
         const handleAdminSubmit = (e) => {
           e.preventDefault();
           const targetAdmin = adminMembers.find(m => m.id === selectedAdminId) || adminMembers[0] || members[0];
-          const expected = targetAdmin?.password || '10114admin';
-          if (adminPassword.trim() !== expected) {
-            setAdminErr('管理員密碼錯誤！請重新輸入（預設密碼：10114admin）');
+          const expected = targetAdmin?.password || DEFAULT_ADMIN_ENC;
+          if (!verifySecret(adminPassword.trim(), expected)) {
+            setAdminErr('管理員密碼錯誤！請確認後重新輸入');
             return;
           }
           setAdminErr('');
@@ -13569,9 +13656,9 @@
             setMemberErr('無可登入的隊員帳號');
             return;
           }
-          const expected = targetMember?.password || '10114';
-          if (memberPassword.trim() !== expected) {
-            setMemberErr('隊員密碼錯誤！請重新輸入（預設密碼：10114）');
+          const expected = targetMember?.password || DEFAULT_MEMBER_ENC;
+          if (!verifySecret(memberPassword.trim(), expected)) {
+            setMemberErr('隊員密碼錯誤！請確認後重新輸入');
             return;
           }
           setMemberErr('');
@@ -13587,14 +13674,14 @@
             return;
           }
           if (selectedStudent?.parentPassword) {
-            if (parentPassword.trim() !== selectedStudent.parentPassword) {
+            if (!verifySecret(parentPassword.trim(), selectedStudent.parentPassword)) {
               setParentErr('家長安全通關碼錯誤！若曾變更密碼，請輸入新設定的家長密碼。');
               return;
             }
           } else {
-            const expectedPass = selectedStudent?.password || '10114';
-            if (parentPassword.trim() !== expectedPass && parentPassword.trim() !== '10114') {
-              setParentErr('家長安全通關碼錯誤！（預設密碼為：10114）');
+            const expectedPass = selectedStudent?.password || DEFAULT_MEMBER_ENC;
+            if (!verifySecret(parentPassword.trim(), expectedPass) && !verifySecret(parentPassword.trim(), DEFAULT_MEMBER_ENC)) {
+              setParentErr('家長安全通關碼錯誤！請確認後重新輸入');
               return;
             }
           }
@@ -13716,14 +13803,14 @@
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-xs font-bold text-zinc-700">管理員密碼</label>
-                        <span className="text-[11px] text-zinc-400">預設密碼：10114admin</span>
+                        <span className="text-[11px] text-zinc-400">安全加密保護</span>
                       </div>
                       <div className="relative">
                         <input
                           type={showAdminPass ? 'text' : 'password'}
                           value={adminPassword}
                           onChange={(e) => { setAdminPassword(e.target.value); setAdminErr(''); }}
-                          placeholder="請輸入管理員密碼 (預設 10114admin)"
+                          placeholder="請輸入管理員密碼"
                           className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                         />
                         <button
@@ -13795,14 +13882,14 @@
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-xs font-bold text-zinc-700">隊員登入密碼</label>
-                        <span className="text-[11px] text-zinc-400">預設密碼：10114</span>
+                        <span className="text-[11px] text-zinc-400">請輸入個人登入密碼</span>
                       </div>
                       <div className="relative">
                         <input
                           type={showMemberPass ? 'text' : 'password'}
                           value={memberPassword}
                           onChange={(e) => { setMemberPassword(e.target.value); setMemberErr(''); }}
-                          placeholder="請輸入隊員密碼 (預設 10114)"
+                          placeholder="請輸入隊員密碼"
                           className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                         />
                         <button
@@ -13882,7 +13969,7 @@
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-xs font-bold text-zinc-700">家長安全通關密碼</label>
                         <span className="text-[11px] text-zinc-400">
-                          {currentSelStudentForParent?.parentPassword ? '已自訂家長密碼' : '預設密碼：10114'}
+                          {currentSelStudentForParent?.parentPassword ? '已自訂家長密碼' : '安全通關驗證'}
                         </span>
                       </div>
                       <div className="relative">
@@ -13890,7 +13977,7 @@
                           type={showParentPass ? 'text' : 'password'}
                           value={parentPassword}
                           onChange={(e) => { setParentPassword(e.target.value); setParentErr(''); }}
-                          placeholder={currentSelStudentForParent?.parentPassword ? "請輸入自訂的家長密碼" : "請輸入通關密碼（預設 10114）"}
+                          placeholder={currentSelStudentForParent?.parentPassword ? "請輸入自訂的家長密碼" : "請輸入家長通關密碼"}
                           className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                         />
                         <button
