@@ -219,6 +219,141 @@
         return inp === s;
       }
 
+      const SENSITIVE_PII_FIELDS = [
+        'nationalId',
+        'passportName',
+        'birthDate',
+        'phone',
+        'email',
+        'address',
+        'guardianName',
+        'guardianPhone',
+      ];
+
+      // Authenticated 256-bit Stream Cipher for Cloud Vault (keyHex is derived from user's password and NEVER stored in HTML/team_state)
+      function vaultEncrypt(plainText, keyHex) {
+        if (!plainText || !keyHex) return '';
+        try {
+          const randBytes = new Uint8Array(8);
+          if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+            crypto.getRandomValues(randBytes);
+          } else {
+            for (let i = 0; i < 8; i++) randBytes[i] = Math.floor(Math.random() * 256);
+          }
+          let nonceHex = '';
+          for (let i = 0; i < 8; i++) nonceHex += randBytes[i].toString(16).padStart(2, '0');
+          const plainBytes = new TextEncoder().encode(String(plainText));
+          let cipherHex = '';
+          let streamBlock = new Uint8Array(0);
+          for (let i = 0; i < plainBytes.length; i++) {
+            const offset = i & 31;
+            if (offset === 0) {
+              const blkHex = rawDigest256('VAULT_STREAM_V3', `${keyHex}::${nonceHex}::${i >>> 5}`);
+              streamBlock = new Uint8Array(32);
+              for (let j = 0; j < 32; j++) {
+                streamBlock[j] = parseInt(blkHex.slice(j * 2, j * 2 + 2), 16);
+              }
+            }
+            const c = (plainBytes[i] ^ streamBlock[offset]) & 0xff;
+            cipherHex += c.toString(16).padStart(2, '0');
+          }
+          const macHex = rawDigest256('VAULT_MAC_V3', `${keyHex}::${nonceHex}::${cipherHex}`).slice(0, 16);
+          return `vlt3$${nonceHex}$${macHex}$${cipherHex}`;
+        } catch (e) {
+          return '';
+        }
+      }
+
+      function vaultDecrypt(cipherText, keyHex) {
+        if (!cipherText || !keyHex || typeof cipherText !== 'string' || !cipherText.startsWith('vlt3$')) return null;
+        try {
+          const parts = cipherText.split('$');
+          if (parts.length !== 4) return null;
+          const [, nonceHex, macHex, cipherHex] = parts;
+          const expectedMac = rawDigest256('VAULT_MAC_V3', `${keyHex}::${nonceHex}::${cipherHex}`).slice(0, 16);
+          if (macHex !== expectedMac) return null;
+          const outBytes = new Uint8Array(cipherHex.length / 2);
+          let streamBlock = new Uint8Array(0);
+          for (let i = 0; i < outBytes.length; i++) {
+            const offset = i & 31;
+            if (offset === 0) {
+              const blkHex = rawDigest256('VAULT_STREAM_V3', `${keyHex}::${nonceHex}::${i >>> 5}`);
+              streamBlock = new Uint8Array(32);
+              for (let j = 0; j < 32; j++) {
+                streamBlock[j] = parseInt(blkHex.slice(j * 2, j * 2 + 2), 16);
+              }
+            }
+            const c = parseInt(cipherHex.slice(i * 2, i * 2 + 2), 16);
+            outBytes[i] = (c ^ streamBlock[offset]) & 0xff;
+          }
+          return new TextDecoder().decode(outBytes);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function extractMemberPii(m) {
+        if (!m) return {};
+        const pii = {};
+        for (const f of SENSITIVE_PII_FIELDS) {
+          if (m[f] !== undefined && m[f] !== null && String(m[f]).trim() !== '') {
+            pii[f] = decodeSecret(String(m[f]).trim());
+          }
+        }
+        return pii;
+      }
+
+      function hasMemberPii(m) {
+        if (!m) return false;
+        return SENSITIVE_PII_FIELDS.some(f => m[f] !== undefined && m[f] !== null && String(m[f]).trim() !== '');
+      }
+
+      function hasLegacySecretFields(membersList) {
+        if (!Array.isArray(membersList)) return false;
+        return membersList.some(m => {
+          if (!m) return false;
+          if (m.password || m.parentPassword) return true;
+          return hasMemberPii(m);
+        });
+      }
+
+      function getVaultAuthDocId(role, memberId, h2OrPlain) {
+        const h2 = hashPassword(h2OrPlain);
+        return 'auth2_' + rawDigest256('VAULT_AUTH_H2_V3', `${role}::${memberId}::${h2}`);
+      }
+
+      const verifiedAuthMemorySet = new Set();
+
+      function recordLocalVerifiedAuth(authDocId) {
+        if (!authDocId) return;
+        verifiedAuthMemorySet.add(authDocId);
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem('frc10114_verified_auth_id', authDocId);
+          }
+          if (typeof localStorage !== 'undefined') {
+            const map = JSON.parse(localStorage.getItem('frc10114_local_auth_v3') || '{}');
+            map[authDocId] = true;
+            localStorage.setItem('frc10114_local_auth_v3', JSON.stringify(map));
+          }
+        } catch (e) {}
+      }
+
+      function isLocalVerifiedAuth(authDocId) {
+        if (!authDocId) return false;
+        if (verifiedAuthMemorySet.has(authDocId)) return true;
+        try {
+          if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('frc10114_verified_auth_id') === authDocId) {
+            return true;
+          }
+          if (typeof localStorage !== 'undefined') {
+            const map = JSON.parse(localStorage.getItem('frc10114_local_auth_v3') || '{}');
+            if (map && map[authDocId] === true) return true;
+          }
+        } catch (e) {}
+        return false;
+      }
+
       // Unforgeable SCRAM Session Signature: requires pre-image ClientProof that hashes to member's StoredKey
       function createSessionSig(role, memberId, plainOrProof) {
         if (!role || !memberId || !plainOrProof) return '';
@@ -242,15 +377,36 @@
             targetMember.id === '10114-001' ||
             (targetMember.id && targetMember.id.startsWith('10114-ADM'));
           if (!isValidAdmin) return false;
-          return derivedH2 === hashPassword(targetMember.password || DEFAULT_ADMIN_ENC);
+          if (targetMember.password) {
+            return derivedH2 === hashPassword(targetMember.password);
+          }
+          const authDocId = getVaultAuthDocId('admin', memberId, derivedH2);
+          if (isLocalVerifiedAuth(authDocId)) return true;
+          if (!targetMember.hasCustomPass) return derivedH2 === DEFAULT_ADMIN_ENC;
+          return false;
         }
         if (role === 'parent') {
           if (targetMember.parentPassword) {
             return derivedH2 === hashPassword(targetMember.parentPassword);
           }
-          return derivedH2 === hashPassword(targetMember.password || DEFAULT_MEMBER_ENC) || derivedH2 === DEFAULT_MEMBER_ENC;
+          if (targetMember.password && !targetMember.hasCustomParentPass) {
+            return derivedH2 === hashPassword(targetMember.password) || derivedH2 === DEFAULT_MEMBER_ENC;
+          }
+          const pAuthId = getVaultAuthDocId('parent', memberId, derivedH2);
+          const mAuthId = getVaultAuthDocId('member', memberId, derivedH2);
+          if (isLocalVerifiedAuth(pAuthId) || (!targetMember.hasCustomParentPass && isLocalVerifiedAuth(mAuthId))) {
+            return true;
+          }
+          if (!targetMember.hasCustomParentPass) return derivedH2 === DEFAULT_MEMBER_ENC;
+          return false;
         }
-        return derivedH2 === hashPassword(targetMember.password || DEFAULT_MEMBER_ENC);
+        if (targetMember.password) {
+          return derivedH2 === hashPassword(targetMember.password);
+        }
+        const mAuthId = getVaultAuthDocId('member', memberId, derivedH2);
+        if (isLocalVerifiedAuth(mAuthId)) return true;
+        if (!targetMember.hasCustomPass) return derivedH2 === DEFAULT_MEMBER_ENC;
+        return false;
       }
 
       function sanitizeAvatarUrl(url) {
@@ -262,266 +418,215 @@
         return undefined;
       }
 
+      // Public Storage Serializer: Strictly strips ALL passwords and ALL sensitive PII!
+      // Only public roster fields (id, name, englishName, className, seatNumber, departments, motto, role, avatar) are stored in team_state & localStorage.
       function encodeMembersForStorage(membersList) {
         if (!Array.isArray(membersList)) return [];
         return membersList.map(m => {
           if (!m) return m;
-          const out = { ...m };
-          if (out._newPassword !== undefined) delete out._newPassword;
-          if (out.password) out.password = hashPassword(out.password);
-          if (out.parentPassword) out.parentPassword = hashPassword(out.parentPassword);
-          if (out.nationalId) out.nationalId = encodeSecret(out.nationalId);
-          if (out.address) out.address = encodeSecret(out.address);
-          if (out.passportName) out.passportName = encodeSecret(out.passportName);
-          if (out.birthDate) out.birthDate = encodeSecret(out.birthDate);
-          if (out.phone) out.phone = encodeSecret(out.phone);
-          if (out.email) out.email = encodeSecret(out.email);
-          if (out.guardianName) out.guardianName = encodeSecret(out.guardianName);
-          if (out.guardianPhone) out.guardianPhone = encodeSecret(out.guardianPhone);
-          if (out.avatar !== undefined) out.avatar = sanitizeAvatarUrl(out.avatar);
+          const role = m.role || (m.id === '10114-001' || (m.id && m.id.includes('-A')) ? 'admin' : 'member');
+          const defaultHash = role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
+          const hasCustomPass = m.password
+            ? hashPassword(m.password) !== defaultHash
+            : Boolean(m.hasCustomPass);
+          const hasCustomParentPass = m.parentPassword
+            ? hashPassword(m.parentPassword) !== DEFAULT_MEMBER_ENC
+            : Boolean(m.hasCustomParentPass);
+          const out = {
+            id: m.id || '',
+            name: m.name || '',
+            englishName: m.englishName || '',
+            className: m.className || '',
+            seatNumber: m.seatNumber || '',
+            departments: Array.isArray(m.departments) ? m.departments : [],
+            motto: m.motto || '',
+            role,
+            hasCustomPass,
+            hasCustomParentPass,
+          };
+          const cleanAvatar = sanitizeAvatarUrl(m.avatar);
+          if (cleanAvatar) out.avatar = cleanAvatar;
           return out;
         });
       }
 
-      function normalizeMembersFromStorage(membersList) {
+      function normalizeMembersFromStorage(membersList, unlockedPiiMap = {}) {
         if (!Array.isArray(membersList)) return [];
         return membersList.map(m => {
           if (!m) return m;
           const role = m.role || (m.id === '10114-001' || (m.id && m.id.includes('-A')) ? 'admin' : 'member');
+          const defaultHash = role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
+          const hasCustomPass = m.password
+            ? hashPassword(m.password) !== defaultHash
+            : Boolean(m.hasCustomPass);
+          const hasCustomParentPass = m.parentPassword
+            ? hashPassword(m.parentPassword) !== DEFAULT_MEMBER_ENC
+            : Boolean(m.hasCustomParentPass);
+          const piiFromVault = (unlockedPiiMap && m.id && unlockedPiiMap[m.id]) ? unlockedPiiMap[m.id] : {};
           const out = {
-            ...m,
+            id: m.id || '',
+            name: m.name || '',
+            englishName: m.englishName || '',
+            className: m.className || '',
+            seatNumber: m.seatNumber || '',
+            departments: Array.isArray(m.departments) ? m.departments : [],
+            motto: m.motto || '',
             role,
-            password: hashPassword(m.password || (role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
-            parentPassword: m.parentPassword ? hashPassword(m.parentPassword) : undefined,
-            nationalId: m.nationalId ? decodeSecret(m.nationalId) : m.nationalId,
-            address: m.address ? decodeSecret(m.address) : m.address,
-            passportName: m.passportName ? decodeSecret(m.passportName) : m.passportName,
-            birthDate: m.birthDate ? decodeSecret(m.birthDate) : m.birthDate,
-            phone: m.phone ? decodeSecret(m.phone) : m.phone,
-            email: m.email ? decodeSecret(m.email) : m.email,
-            guardianName: m.guardianName ? decodeSecret(m.guardianName) : m.guardianName,
-            guardianPhone: m.guardianPhone ? decodeSecret(m.guardianPhone) : m.guardianPhone,
+            hasCustomPass,
+            hasCustomParentPass,
             avatar: sanitizeAvatarUrl(m.avatar),
           };
-          if (out._newPassword !== undefined) delete out._newPassword;
+          for (const f of SENSITIVE_PII_FIELDS) {
+            if (piiFromVault[f] !== undefined) {
+              out[f] = piiFromVault[f];
+            }
+          }
           return out;
         });
       }
 
-      // --- 1. SEED DATA SPECIFICATION ---
+      // --- 1. SEED DATA SPECIFICATION (PUBLIC ROSTER ONLY - ZERO PII / PASSWORDS IN SOURCE) ---
       const INITIAL_MEMBERS = [
         {
           id: '10114-001',
           name: '管理員教練 (Coach Hsu)',
           className: '科技中心',
           seatNumber: '01',
-          email: 'coach@frc10114.org',
           departments: ['機電整合組', '程式控制組', '行銷管理組'],
           motto: '培育卓越工程師，傳承 10114 堅持不懈的機器人精神！',
-          phone: '0912-345-678',
           role: 'admin',
-          password: DEFAULT_ADMIN_ENC,
           englishName: 'Coach Hsu',
-          passportName: 'HSU, CHIA-CHENG',
-          birthDate: '1985-06-18',
-          nationalId: 'A123456789',
-          address: '新北市中和區錦和路163號 (錦和高中科技中心)',
-          guardianName: '許教練本人',
-          guardianPhone: '0912-345-678',
         },
         {
           id: '10114-002',
           name: '林恩萱',
           className: '高二1班',
           seatNumber: '08',
-          email: 'enxuan.lin@frc10114.org',
           departments: ['程式控制組', '機電整合組'],
           motto: '堅持熱愛，讓一行行程式與機構在賽場上精準綻放！',
-          phone: '0988-111-222',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
           englishName: 'Enxuan',
-          passportName: 'LIN, EN-HSUAN',
-          birthDate: '2008-07-15',
-          nationalId: 'F234567890',
-          address: '新北市中和區錦和路163號',
-          guardianName: '林家長',
-          guardianPhone: '0988-888-111',
         },
         {
           id: '10114-008',
           name: '王小明',
           className: '高二3班',
           seatNumber: '15',
-          email: 'xiaoming.wang@frc10114.org',
           departments: ['機電整合組'],
           motto: '結構穩定是一切的基石，一顆螺絲都不能鬆動！',
-          phone: '0977-333-444',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
           englishName: 'Xiao-Ming',
-          passportName: 'WANG, HSIAO-MING',
-          birthDate: '2008-11-20',
-          nationalId: 'F123456781',
-          address: '新北市中和區圓通路290號',
-          guardianName: '王家長',
-          guardianPhone: '0977-777-222',
         },
         {
           id: '10114-012',
           name: '陳大明',
           className: '高二2班',
           seatNumber: '21',
-          email: 'daming.chen@frc10114.org',
           departments: ['程式控制組'],
           motto: '挑戰極致演算法，寫出全場最流暢的自主移動軌跡。',
-          phone: '0966-555-666',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
           englishName: 'David',
-          passportName: 'CHEN, TA-MING',
-          birthDate: '2008-03-08',
-          nationalId: 'F123456782',
-          address: '新北市永和區中正路100號',
-          guardianName: '陳家長',
-          guardianPhone: '0966-666-333',
         },
         {
           id: '10114-015',
           name: '張詠晴',
           className: '高一1班',
           seatNumber: '05',
-          email: 'yongqing.zhang@frc10114.org',
           departments: ['行銷管理組'],
           motto: '傳遞科技熱情，讓世界聽見新北錦和 10114 的熱血故事。',
-          phone: '0955-777-888',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
           englishName: 'Sunny',
-          passportName: 'ZHANG, YONG-QING',
-          birthDate: '2009-01-25',
-          nationalId: 'A234567893',
-          address: '新北市中和區連城路200號',
-          guardianName: '張家長',
-          guardianPhone: '0955-555-444',
         },
         {
           id: '10114-018',
           name: '廖子涵',
           className: '高二5班',
           seatNumber: '12',
-          email: 'zihan.liao@frc10114.org',
           departments: ['機電整合組', '行銷管理組'],
           motto: '工廠加工與企業公關雙修，做最全面的 FIRST 創作者！',
-          phone: '0933-888-999',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
           englishName: 'Hanna',
-          passportName: 'LIAO, TZU-HAN',
-          birthDate: '2008-09-12',
-          nationalId: 'F234567894',
-          address: '新北市板橋區縣民大道二段',
-          guardianName: '廖家長',
-          guardianPhone: '0933-333-555',
         },
         {
           id: '10114-020',
           name: '汪宥同',
           className: '106',
           seatNumber: '16',
-          email: 'youtong.wang@frc10114.org',
           departments: ['機電整合組'],
           motto: '細心組裝機構，打造最強壯的機器人！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-021',
           name: '林思佑',
           className: '302',
           seatNumber: '09',
-          email: 'siyou.lin@frc10114.org',
           departments: ['機電整合組', '程式控制組'],
           motto: '帶領學弟妹衝擊第一名！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-022',
           name: '彭曼唯',
           className: '108',
           seatNumber: '25',
-          email: 'manwei.peng@frc10114.org',
           departments: ['行銷管理組'],
           motto: '記錄每一刻團隊的感動與熱血！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-023',
           name: '王璿榕',
           className: '105',
           seatNumber: '11',
-          email: 'xuanrong.wang@frc10114.org',
           departments: ['程式控制組'],
           motto: '自走期精準路徑規劃是勝利關鍵。',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-024',
           name: '陳雩',
           className: '201',
           seatNumber: '18',
-          email: 'yu.chen@frc10114.org',
           departments: ['機電整合組'],
           motto: '結構輕量化與極致耐用！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-025',
           name: '楊詠任',
           className: '205',
           seatNumber: '22',
-          email: 'yongren.yang@frc10114.org',
           departments: ['程式控制組'],
           motto: '底盤驅動與視覺對位零誤差！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-026',
           name: '許祐掄',
           className: '105',
           seatNumber: '14',
-          email: 'youlun.xu@frc10114.org',
           departments: ['機電整合組'],
           motto: '精益求精，做好每一個零件！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-027',
           name: '林竫涵',
           className: '102',
           seatNumber: '07',
-          email: 'jinghan.lin@frc10114.org',
           departments: ['行銷管理組'],
           motto: '向世界分享錦和 10114 的榮耀！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
         {
           id: '10114-028',
           name: '劉泰宏',
           className: '104',
           seatNumber: '19',
-          email: 'taihong.liu@frc10114.org',
           departments: ['機電整合組'],
           motto: '快速換刀銑削，全力支援加工！',
           role: 'member',
-          password: DEFAULT_MEMBER_ENC,
         },
       ];
 
@@ -1483,6 +1588,576 @@
         return null;
       }
 
+      // --- ZERO-KNOWLEDGE CLOUD VAULT ENGINE (frc10114_vault) ---
+      // Isolates all password verifiers and sensitive PII out of team_state & localStorage.
+      // Protected by Firestore Rules (allow list: if false) + 256-bit Password-Derived Keys + 2048-bit RSA-OAEP Envelopes.
+      let pendingLocalLegacyMembers = null;
+      try {
+        const rawLocal = localStorage.getItem('frc10114_members');
+        if (rawLocal) {
+          const parsedLocal = JSON.parse(rawLocal);
+          if (hasLegacySecretFields(parsedLocal)) {
+            pendingLocalLegacyMembers = parsedLocal;
+            localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(parsedLocal)));
+          }
+        }
+      } catch (e) {}
+
+      function getSessionProofFromStorage() {
+        try {
+          const sig = sessionStorage.getItem('frc10114_session_sig');
+          if (!sig) return '';
+          const proof = sig.split(':')[0];
+          return proof && proof.startsWith('proof$') ? proof : '';
+        } catch (e) {
+          return '';
+        }
+      }
+
+      function uint8ToBase64(bytes) {
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+      }
+
+      function base64ToUint8(b64) {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+
+      async function generateRsaKeyPairJwk() {
+        if (!window.crypto || !window.crypto.subtle) return null;
+        try {
+          const kp = await window.crypto.subtle.generateKey(
+            {
+              name: 'RSA-OAEP',
+              modulusLength: 2048,
+              publicExponent: new Uint8Array([1, 0, 1]),
+              hash: 'SHA-256',
+            },
+            true,
+            ['encrypt', 'decrypt']
+          );
+          const pubJwk = await window.crypto.subtle.exportKey('jwk', kp.publicKey);
+          const privJwk = await window.crypto.subtle.exportKey('jwk', kp.privateKey);
+          return { pubJwk, privJwk };
+        } catch (e) {
+          return null;
+        }
+      }
+
+      async function rsaEncryptPiiEnvelope(piiObj, pubJwk) {
+        if (!piiObj || !pubJwk || !window.crypto || !window.crypto.subtle) return null;
+        try {
+          const pubKey = await window.crypto.subtle.importKey(
+            'jwk',
+            pubJwk,
+            { name: 'RSA-OAEP', hash: 'SHA-256' },
+            false,
+            ['encrypt']
+          );
+          const randBytes = new Uint8Array(32);
+          window.crypto.getRandomValues(randBytes);
+          let ephKeyHex = '';
+          for (let i = 0; i < 32; i++) ephKeyHex += randBytes[i].toString(16).padStart(2, '0');
+          const cipherPii = vaultEncrypt(JSON.stringify(piiObj), ephKeyHex);
+          const encBuf = await window.crypto.subtle.encrypt(
+            { name: 'RSA-OAEP' },
+            pubKey,
+            new TextEncoder().encode(ephKeyHex)
+          );
+          return {
+            encKeyB64: uint8ToBase64(new Uint8Array(encBuf)),
+            cipherPii,
+            updatedAt: Date.now(),
+          };
+        } catch (e) {
+          return null;
+        }
+      }
+
+      async function rsaDecryptPiiEnvelope(envelope, privJwk) {
+        if (!envelope || !envelope.encKeyB64 || !envelope.cipherPii || !privJwk || !window.crypto || !window.crypto.subtle) {
+          return null;
+        }
+        try {
+          const privKey = await window.crypto.subtle.importKey(
+            'jwk',
+            privJwk,
+            { name: 'RSA-OAEP', hash: 'SHA-256' },
+            false,
+            ['decrypt']
+          );
+          const decBuf = await window.crypto.subtle.decrypt(
+            { name: 'RSA-OAEP' },
+            privKey,
+            base64ToUint8(envelope.encKeyB64)
+          );
+          const ephKeyHex = new TextDecoder().decode(new Uint8Array(decBuf));
+          const jsonStr = vaultDecrypt(envelope.cipherPii, ephKeyHex);
+          return jsonStr ? JSON.parse(jsonStr) : null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      async function migrateLegacyMembersToVault(db, rawMembersList) {
+        if (!db || !Array.isArray(rawMembersList) || !hasLegacySecretFields(rawMembersList)) return false;
+        try {
+          const piiMap = {};
+          const writes = [];
+          for (const m of rawMembersList) {
+            if (!m || !m.id) continue;
+            const role = m.role || (m.id === '10114-001' || m.id.includes('-A') ? 'admin' : 'member');
+            const defaultHash = role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
+            const memH2 = hashPassword(m.password || defaultHash);
+            const authDocId = getVaultAuthDocId(role, m.id, memH2);
+            recordLocalVerifiedAuth(authDocId);
+            writes.push(
+              db.collection('frc10114_vault').doc(authDocId).set({
+                valid: true,
+                role,
+                memberId: m.id,
+                updatedAt: Date.now(),
+              })
+            );
+            if (m.parentPassword) {
+              const pH2 = hashPassword(m.parentPassword);
+              const pAuthId = getVaultAuthDocId('parent', m.id, pH2);
+              recordLocalVerifiedAuth(pAuthId);
+              writes.push(
+                db.collection('frc10114_vault').doc(pAuthId).set({
+                  valid: true,
+                  role: 'parent',
+                  memberId: m.id,
+                  updatedAt: Date.now(),
+                })
+              );
+            }
+            if (hasMemberPii(m)) {
+              const pii = extractMemberPii(m);
+              piiMap[m.id] = pii;
+              if (memH2 !== DEFAULT_MEMBER_ENC) {
+                const memMigKey = rawDigest256('MEM_MIG_KEY_V3', `${m.id}::${memH2}`);
+                const memMigDocId = 'mpii_' + rawDigest256('MEM_MIG_DOC_V3', memMigKey);
+                writes.push(
+                  db.collection('frc10114_vault').doc(memMigDocId).set({
+                    cipherPayload: vaultEncrypt(JSON.stringify(pii), memMigKey),
+                    updatedAt: Date.now(),
+                  })
+                );
+              }
+            }
+          }
+          if (Object.keys(piiMap).length > 0) {
+            const adminM = rawMembersList.find(m => m && (m.id === '10114-001' || m.role === 'admin'));
+            const adminH2 = hashPassword(adminM?.password || DEFAULT_ADMIN_ENC);
+            const migKey = rawDigest256('MIGRATION_KEY_V3', adminH2);
+            const migDocId = 'mig_' + rawDigest256('MIGRATION_DOC_V3', migKey);
+            writes.push(
+              db.collection('frc10114_vault').doc(migDocId).set({
+                cipherPayload: vaultEncrypt(JSON.stringify(piiMap), migKey),
+                updatedAt: Date.now(),
+              })
+            );
+          }
+          await Promise.allSettled(writes);
+          return true;
+        } catch (e) {
+          console.warn('Vault migration warning:', e);
+          return false;
+        }
+      }
+
+      async function verifyAccountCredential(firebaseConfig, role, targetMember, rawPassword) {
+        if (!targetMember || !rawPassword) return false;
+        const cleanPass = String(rawPassword).trim();
+        const h2 = hashPassword(cleanPass);
+        const authDocId = getVaultAuthDocId(role, targetMember.id, h2);
+
+        if (role === 'parent') {
+          if (targetMember.parentPassword) {
+            if (verifySecret(cleanPass, targetMember.parentPassword)) {
+              recordLocalVerifiedAuth(authDocId);
+              return true;
+            }
+            return false;
+          }
+          if (targetMember.password && verifySecret(cleanPass, targetMember.password)) {
+            recordLocalVerifiedAuth(authDocId);
+            return true;
+          }
+        } else if (targetMember.password) {
+          if (verifySecret(cleanPass, targetMember.password)) {
+            recordLocalVerifiedAuth(authDocId);
+            return true;
+          }
+          return false;
+        }
+
+        const db = initFirestore(firebaseConfig);
+        if (db) {
+          try {
+            const snap = await db.collection('frc10114_vault').doc(authDocId).get();
+            if (snap.exists && snap.data()?.valid === true) {
+              recordLocalVerifiedAuth(authDocId);
+              return true;
+            }
+            if (role === 'parent' && !targetMember.hasCustomParentPass) {
+              const mAuthId = getVaultAuthDocId('member', targetMember.id, h2);
+              const mSnap = await db.collection('frc10114_vault').doc(mAuthId).get();
+              if (mSnap.exists && mSnap.data()?.valid === true) {
+                recordLocalVerifiedAuth(mAuthId);
+                return true;
+              }
+            }
+          } catch (e) {}
+        }
+
+        if (isLocalVerifiedAuth(authDocId)) return true;
+
+        if (role === 'admin') {
+          if (!targetMember.hasCustomPass && h2 === DEFAULT_ADMIN_ENC) {
+            recordLocalVerifiedAuth(authDocId);
+            return true;
+          }
+          return false;
+        }
+        if (role === 'parent') {
+          if (!targetMember.hasCustomParentPass && h2 === DEFAULT_MEMBER_ENC) {
+            recordLocalVerifiedAuth(authDocId);
+            return true;
+          }
+          return false;
+        }
+        if (!targetMember.hasCustomPass && h2 === DEFAULT_MEMBER_ENC) {
+          recordLocalVerifiedAuth(authDocId);
+          return true;
+        }
+        return false;
+      }
+
+      async function unlockSessionVault(firebaseConfig, role, memberId, proofOrPlain, membersList) {
+        const db = initFirestore(firebaseConfig);
+        if (!db || !role || !memberId || !proofOrPlain) return {};
+        const proof = deriveClientProof(proofOrPlain);
+        const h2 = hashPassword(proof);
+
+        try {
+          if (role === 'admin') {
+            const adminVaultKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${memberId}::${proof}`);
+            const adminVaultDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', adminVaultKey);
+            let piiMap = {};
+            let rsaPubJwk = null;
+            let rsaPrivJwk = null;
+            let needsSave = false;
+
+            const admSnap = await db.collection('frc10114_vault').doc(adminVaultDocId).get();
+            if (admSnap.exists && admSnap.data()?.cipherPayload) {
+              const dec = vaultDecrypt(admSnap.data().cipherPayload, adminVaultKey);
+              if (dec) {
+                const parsed = JSON.parse(dec);
+                piiMap = parsed.piiMap || {};
+                rsaPubJwk = parsed.rsaPubJwk || null;
+                rsaPrivJwk = parsed.rsaPrivJwk || null;
+              }
+            }
+
+            // Import one-time legacy migration package if present
+            const migKey = rawDigest256('MIGRATION_KEY_V3', h2);
+            const migDocId = 'mig_' + rawDigest256('MIGRATION_DOC_V3', migKey);
+            const migSnap = await db.collection('frc10114_vault').doc(migDocId).get();
+            if (migSnap.exists && migSnap.data()?.cipherPayload) {
+              const migDec = vaultDecrypt(migSnap.data().cipherPayload, migKey);
+              if (migDec) {
+                const migPii = JSON.parse(migDec);
+                piiMap = { ...migPii, ...piiMap };
+                needsSave = true;
+                try { await db.collection('frc10114_vault').doc(migDocId).delete(); } catch (e) {}
+              }
+            }
+
+            // Ensure Admin 2048-bit RSA-OAEP Keypair for Student->Coach Encrypted Inbox
+            if (!rsaPubJwk || !rsaPrivJwk) {
+              const kp = await generateRsaKeyPairJwk();
+              if (kp) {
+                rsaPubJwk = kp.pubJwk;
+                rsaPrivJwk = kp.privJwk;
+                needsSave = true;
+                try {
+                  await db.collection('frc10114_vault').doc('pub_admin_key').set({
+                    pubJwk: rsaPubJwk,
+                    updatedAt: Date.now(),
+                  });
+                } catch (e) {}
+              }
+            }
+
+            // Check Student->Coach Encrypted Inbox updates
+            if (rsaPrivJwk && Array.isArray(membersList)) {
+              const inboxChecks = membersList.map(async (m) => {
+                if (!m || !m.id) return;
+                const inboxDocId = 'inbox_' + rawDigest256('INBOX_DOC_V3', m.id);
+                try {
+                  const inSnap = await db.collection('frc10114_vault').doc(inboxDocId).get();
+                  if (inSnap.exists && inSnap.data()?.encKeyB64) {
+                    const studentPii = await rsaDecryptPiiEnvelope(inSnap.data(), rsaPrivJwk);
+                    if (studentPii) {
+                      piiMap[m.id] = { ...(piiMap[m.id] || {}), ...studentPii };
+                      needsSave = true;
+                      await db.collection('frc10114_vault').doc(inboxDocId).delete();
+                    }
+                  }
+                } catch (e) {}
+              });
+              await Promise.allSettled(inboxChecks);
+            }
+
+            if (needsSave) {
+              const payloadStr = JSON.stringify({ piiMap, rsaPubJwk, rsaPrivJwk });
+              await db.collection('frc10114_vault').doc(adminVaultDocId).set({
+                cipherPayload: vaultEncrypt(payloadStr, adminVaultKey),
+                updatedAt: Date.now(),
+              });
+            }
+            return piiMap;
+          }
+
+          // Member / Parent Vault Unlock (Strictly requires non-default password!)
+          if (h2 === DEFAULT_MEMBER_ENC) {
+            return {};
+          }
+
+          const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
+          const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
+          let myPii = {};
+          let rsaPubJwk = null;
+          let rsaPrivJwk = null;
+          let needsSelfSave = false;
+
+          const selfSnap = await db.collection('frc10114_vault').doc(selfDocId).get();
+          if (selfSnap.exists && selfSnap.data()?.cipherPayload) {
+            const dec = vaultDecrypt(selfSnap.data().cipherPayload, selfKey);
+            if (dec) {
+              const parsed = JSON.parse(dec);
+              myPii = parsed.pii || parsed || {};
+              rsaPubJwk = parsed.rsaPubJwk || null;
+              rsaPrivJwk = parsed.rsaPrivJwk || null;
+            }
+          }
+
+          // Check one-time member migration doc
+          const memMigKey = rawDigest256('MEM_MIG_KEY_V3', `${memberId}::${h2}`);
+          const memMigDocId = 'mpii_' + rawDigest256('MEM_MIG_DOC_V3', memMigKey);
+          const mMigSnap = await db.collection('frc10114_vault').doc(memMigDocId).get();
+          if (mMigSnap.exists && mMigSnap.data()?.cipherPayload) {
+            const mDec = vaultDecrypt(mMigSnap.data().cipherPayload, memMigKey);
+            if (mDec) {
+              myPii = { ...JSON.parse(mDec), ...myPii };
+              needsSelfSave = true;
+              try { await db.collection('frc10114_vault').doc(memMigDocId).delete(); } catch (e) {}
+            }
+          }
+
+          // Ensure Member 2048-bit RSA-OAEP Keypair for Coach->Student Encrypted Outbox
+          if (!rsaPubJwk || !rsaPrivJwk) {
+            const kp = await generateRsaKeyPairJwk();
+            if (kp) {
+              rsaPubJwk = kp.pubJwk;
+              rsaPrivJwk = kp.privJwk;
+              needsSelfSave = true;
+              const pubMemDocId = 'pub_mem_' + rawDigest256('PUB_MEM_DOC_V3', memberId);
+              try {
+                await db.collection('frc10114_vault').doc(pubMemDocId).set({
+                  pubJwk: rsaPubJwk,
+                  updatedAt: Date.now(),
+                });
+              } catch (e) {}
+            }
+          }
+
+          // Check Coach->Student Outbox
+          if (rsaPrivJwk) {
+            const outboxDocId = 'outbox_' + rawDigest256('OUTBOX_DOC_V3', memberId);
+            const outSnap = await db.collection('frc10114_vault').doc(outboxDocId).get();
+            if (outSnap.exists && outSnap.data()?.encKeyB64) {
+              const coachPii = await rsaDecryptPiiEnvelope(outSnap.data(), rsaPrivJwk);
+              if (coachPii) {
+                myPii = { ...myPii, ...coachPii };
+                needsSelfSave = true;
+                try { await db.collection('frc10114_vault').doc(outboxDocId).delete(); } catch (e) {}
+              }
+            }
+          }
+
+          if (needsSelfSave) {
+            await db.collection('frc10114_vault').doc(selfDocId).set({
+              cipherPayload: vaultEncrypt(JSON.stringify({ pii: myPii, rsaPubJwk, rsaPrivJwk }), selfKey),
+              updatedAt: Date.now(),
+            });
+          }
+
+          return Object.keys(myPii).length > 0 ? { [memberId]: myPii } : {};
+        } catch (e) {
+          console.warn('Unlock vault warning:', e);
+          return {};
+        }
+      }
+
+      async function saveAdminVaultData(firebaseConfig, adminId, adminProof, piiMap, targetMemberId = null, targetNewPlainPass = '') {
+        const db = initFirestore(firebaseConfig);
+        if (!db || !adminId || !adminProof) return;
+        try {
+          const proof = deriveClientProof(adminProof);
+          const adminVaultKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${adminId}::${proof}`);
+          const adminVaultDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', adminVaultKey);
+          let rsaPubJwk = null;
+          let rsaPrivJwk = null;
+          const snap = await db.collection('frc10114_vault').doc(adminVaultDocId).get();
+          if (snap.exists && snap.data()?.cipherPayload) {
+            const dec = vaultDecrypt(snap.data().cipherPayload, adminVaultKey);
+            if (dec) {
+              const parsed = JSON.parse(dec);
+              rsaPubJwk = parsed.rsaPubJwk || null;
+              rsaPrivJwk = parsed.rsaPrivJwk || null;
+            }
+          }
+          await db.collection('frc10114_vault').doc(adminVaultDocId).set({
+            cipherPayload: vaultEncrypt(JSON.stringify({ piiMap, rsaPubJwk, rsaPrivJwk }), adminVaultKey),
+            updatedAt: Date.now(),
+          });
+
+          if (targetMemberId && piiMap[targetMemberId]) {
+            if (targetNewPlainPass) {
+              const tProof = deriveClientProof(targetNewPlainPass);
+              if (hashPassword(tProof) !== DEFAULT_MEMBER_ENC) {
+                const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${targetMemberId}::${tProof}`);
+                const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
+                await db.collection('frc10114_vault').doc(selfDocId).set({
+                  cipherPayload: vaultEncrypt(JSON.stringify({ pii: piiMap[targetMemberId] }), selfKey),
+                  updatedAt: Date.now(),
+                });
+              }
+            }
+            const pubMemDocId = 'pub_mem_' + rawDigest256('PUB_MEM_DOC_V3', targetMemberId);
+            const pubSnap = await db.collection('frc10114_vault').doc(pubMemDocId).get();
+            if (pubSnap.exists && pubSnap.data()?.pubJwk) {
+              const env = await rsaEncryptPiiEnvelope(piiMap[targetMemberId], pubSnap.data().pubJwk);
+              if (env) {
+                const outboxDocId = 'outbox_' + rawDigest256('OUTBOX_DOC_V3', targetMemberId);
+                await db.collection('frc10114_vault').doc(outboxDocId).set(env);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Save admin vault warning:', e);
+        }
+      }
+
+      async function saveMemberVaultData(firebaseConfig, memberId, memberProof, myPii) {
+        const db = initFirestore(firebaseConfig);
+        if (!db || !memberId || !myPii) return;
+        try {
+          if (memberProof) {
+            const proof = deriveClientProof(memberProof);
+            if (hashPassword(proof) !== DEFAULT_MEMBER_ENC) {
+              const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
+              const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
+              let rsaPubJwk = null;
+              let rsaPrivJwk = null;
+              const snap = await db.collection('frc10114_vault').doc(selfDocId).get();
+              if (snap.exists && snap.data()?.cipherPayload) {
+                const dec = vaultDecrypt(snap.data().cipherPayload, selfKey);
+                if (dec) {
+                  const parsed = JSON.parse(dec);
+                  rsaPubJwk = parsed.rsaPubJwk || null;
+                  rsaPrivJwk = parsed.rsaPrivJwk || null;
+                }
+              }
+              await db.collection('frc10114_vault').doc(selfDocId).set({
+                cipherPayload: vaultEncrypt(JSON.stringify({ pii: myPii, rsaPubJwk, rsaPrivJwk }), selfKey),
+                updatedAt: Date.now(),
+              });
+            }
+          }
+          // Seal copy for Coach via Coach's 2048-bit RSA-OAEP Public Key
+          const pubAdminSnap = await db.collection('frc10114_vault').doc('pub_admin_key').get();
+          if (pubAdminSnap.exists && pubAdminSnap.data()?.pubJwk) {
+            const env = await rsaEncryptPiiEnvelope(myPii, pubAdminSnap.data().pubJwk);
+            if (env) {
+              const inboxDocId = 'inbox_' + rawDigest256('INBOX_DOC_V3', memberId);
+              await db.collection('frc10114_vault').doc(inboxDocId).set(env);
+            }
+          }
+        } catch (e) {
+          console.warn('Save member vault warning:', e);
+        }
+      }
+
+      async function rotateVaultPassword(firebaseConfig, role, memberId, oldPass, newPass, piiMapOrMyPii) {
+        const db = initFirestore(firebaseConfig);
+        const oldH2 = hashPassword(oldPass);
+        const newH2 = hashPassword(newPass);
+        const oldAuthId = getVaultAuthDocId(role, memberId, oldH2);
+        const newAuthId = getVaultAuthDocId(role, memberId, newH2);
+        recordLocalVerifiedAuth(newAuthId);
+        if (!db) return;
+        try {
+          await db.collection('frc10114_vault').doc(newAuthId).set({
+            valid: true,
+            role,
+            memberId,
+            updatedAt: Date.now(),
+          });
+          if (oldAuthId !== newAuthId) {
+            try { await db.collection('frc10114_vault').doc(oldAuthId).delete(); } catch (e) {}
+          }
+          const oldProof = deriveClientProof(oldPass);
+          const newProof = deriveClientProof(newPass);
+          if (role === 'admin') {
+            const oldKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${memberId}::${oldProof}`);
+            const oldDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', oldKey);
+            const newKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${memberId}::${newProof}`);
+            const newDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', newKey);
+            let payloadObj = { piiMap: piiMapOrMyPii || {} };
+            const snap = await db.collection('frc10114_vault').doc(oldDocId).get();
+            if (snap.exists && snap.data()?.cipherPayload) {
+              const dec = vaultDecrypt(snap.data().cipherPayload, oldKey);
+              if (dec) payloadObj = { ...JSON.parse(dec), piiMap: piiMapOrMyPii || JSON.parse(dec).piiMap || {} };
+            }
+            await db.collection('frc10114_vault').doc(newDocId).set({
+              cipherPayload: vaultEncrypt(JSON.stringify(payloadObj), newKey),
+              updatedAt: Date.now(),
+            });
+            if (oldDocId !== newDocId) {
+              try { await db.collection('frc10114_vault').doc(oldDocId).delete(); } catch (e) {}
+            }
+          } else if (role === 'member') {
+            const oldKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${oldProof}`);
+            const oldDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', oldKey);
+            const newKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${newProof}`);
+            const newDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', newKey);
+            let payloadObj = { pii: (piiMapOrMyPii && piiMapOrMyPii[memberId]) || {} };
+            const snap = await db.collection('frc10114_vault').doc(oldDocId).get();
+            if (snap.exists && snap.data()?.cipherPayload) {
+              const dec = vaultDecrypt(snap.data().cipherPayload, oldKey);
+              if (dec) payloadObj = { ...JSON.parse(dec), pii: (piiMapOrMyPii && piiMapOrMyPii[memberId]) || JSON.parse(dec).pii || {} };
+            }
+            await db.collection('frc10114_vault').doc(newDocId).set({
+              cipherPayload: vaultEncrypt(JSON.stringify(payloadObj), newKey),
+              updatedAt: Date.now(),
+            });
+            if (oldDocId !== newDocId) {
+              try { await db.collection('frc10114_vault').doc(oldDocId).delete(); } catch (e) {}
+            }
+          }
+        } catch (e) {
+          console.warn('Rotate vault password warning:', e);
+        }
+      }
+
       // Smart Array Delta Merge for Firestore Atomic Transactions
       function smartMergeField(key, remoteVal, prevVal, nextVal) {
         if (!Array.isArray(remoteVal) || !Array.isArray(nextVal)) {
@@ -1768,6 +2443,7 @@
         const [isSyncingCloud, setIsSyncingCloud] = useState(false);
         const clientIdRef = React.useRef(Math.random().toString(36).substring(2, 9));
         const isRemoteUpdateRef = React.useRef(false);
+        const unlockedPiiMapRef = React.useRef({});
 
         // Auto-detect shared public/firebase-config.json for seamless zero-config cloud sync
         useEffect(() => {
@@ -1890,15 +2566,34 @@
               setIsFirebaseConnected(false);
               return;
             }
+            if (pendingLocalLegacyMembers) {
+              const localToMig = pendingLocalLegacyMembers;
+              pendingLocalLegacyMembers = null;
+              migrateLegacyMembersToVault(db, localToMig);
+            }
             unsub = db.collection('frc10114_teams').doc('team_state').onSnapshot((doc) => {
               setIsFirebaseConnected(true);
               if (doc.exists) {
                 const data = doc.data();
+                // Auto-migrate & scrub any legacy passwords or PII from public team_state into isolated frc10114_vault
+                if (data && data.members && Array.isArray(data.members) && hasLegacySecretFields(data.members)) {
+                  const rawCloudMembers = data.members;
+                  const cleanPublicMembers = encodeMembersForStorage(rawCloudMembers);
+                  migrateLegacyMembersToVault(db, rawCloudMembers).then(() => {
+                    try {
+                      db.collection('frc10114_teams').doc('team_state').set({
+                        members: cleanPublicMembers,
+                        updatedAt: Date.now(),
+                        updatedBy: clientIdRef.current,
+                      }, { merge: true });
+                    } catch (e) {}
+                  });
+                }
                 // Filter out writes originated by this exact client tab/device
                 if (data && data.updatedBy !== clientIdRef.current) {
                   isRemoteUpdateRef.current = true;
                   if (data.members && Array.isArray(data.members) && data.members.length > 0) {
-                    const normalizedRemoteMembers = normalizeMembersFromStorage(data.members);
+                    const normalizedRemoteMembers = normalizeMembersFromStorage(data.members, unlockedPiiMapRef.current);
                     setMembers(normalizedRemoteMembers);
                     try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normalizedRemoteMembers))); } catch (e) {}
                     setCurrentMember(prev => {
@@ -1958,6 +2653,33 @@
           }
           return () => { if (unsub) unsub(); };
         }, [firebaseConfig]);
+
+        // Unlock isolated Cloud Vault PII in memory ONLY for authenticated user (Admin gets all, Member with custom pass gets own)
+        useEffect(() => {
+          if (!isAuthenticated || !currentMember?.id) {
+            unlockedPiiMapRef.current = {};
+            return;
+          }
+          const proof = getSessionProofFromStorage();
+          if (!proof) return;
+          let cancelled = false;
+          unlockSessionVault(firebaseConfig, currentRole, currentMember.id, proof, members).then((piiMap) => {
+            if (cancelled || !piiMap || Object.keys(piiMap).length === 0) return;
+            unlockedPiiMapRef.current = { ...unlockedPiiMapRef.current, ...piiMap };
+            setMembers(prev => normalizeMembersFromStorage(prev, unlockedPiiMapRef.current));
+            setCurrentMember(prev => {
+              if (!prev) return prev;
+              const myPii = unlockedPiiMapRef.current[prev.id];
+              return myPii ? { ...prev, ...myPii } : prev;
+            });
+            setDraftMember(prev => {
+              if (!prev) return prev;
+              const dPii = unlockedPiiMapRef.current[prev.id];
+              return dPii ? { ...prev, ...dPii } : prev;
+            });
+          });
+          return () => { cancelled = true; };
+        }, [isAuthenticated, currentRole, currentMember?.id, isFirebaseConnected]);
 
         // Push state changes to Cloud Firestore with Granular Field Isolation & Atomic Smart Merge
         const syncToCloud = async (overrideData = null) => {
@@ -2051,7 +2773,7 @@
                       setMaterials(mergedVal);
                       try { localStorage.setItem('frc10114_materials', JSON.stringify(mergedVal)); } catch (e) {}
                     } else if (key === 'members') {
-                      const normMerged = normalizeMembersFromStorage(mergedVal);
+                      const normMerged = normalizeMembersFromStorage(mergedVal, unlockedPiiMapRef.current);
                       setMembers(normMerged);
                       try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normMerged))); } catch (e) {}
                     } else if (key === 'eduCategories') {
@@ -2169,6 +2891,8 @@
             showToast('權限不足', '僅限管理員可建立教練帳號', 'error');
             return false;
           }
+          const rawAdminPass = adminData.password ? adminData.password.trim() : '';
+          const adminH2 = hashPassword(rawAdminPass || DEFAULT_ADMIN_ENC);
           const newAdmin = {
             id: adminData.id.trim(),
             name: adminData.name.trim(),
@@ -2177,7 +2901,7 @@
             departments: adminData.departments && adminData.departments.length > 0 ? adminData.departments : ['機電整合組', '程式控制組', '行銷管理組'],
             motto: adminData.motto || '用心傳承，帶領 FRC 10114 勇闖巔峰！',
             role: 'admin',
-            password: hashPassword(adminData.password || DEFAULT_ADMIN_ENC),
+            hasCustomPass: adminH2 !== DEFAULT_ADMIN_ENC,
           };
           if (!newAdmin.name || !newAdmin.id) {
             showToast('建立失敗', '姓名與編號為必填項目', 'error');
@@ -2187,6 +2911,24 @@
             showToast('建立失敗', `編號 ${newAdmin.id} 已存在，請使用不同編號`, 'warning');
             return false;
           }
+          unlockedPiiMapRef.current = {
+            ...unlockedPiiMapRef.current,
+            [newAdmin.id]: extractMemberPii(newAdmin),
+          };
+          const authDocId = getVaultAuthDocId('admin', newAdmin.id, adminH2);
+          recordLocalVerifiedAuth(authDocId);
+          const db = initFirestore(firebaseConfig);
+          if (db) {
+            try {
+              db.collection('frc10114_vault').doc(authDocId).set({
+                valid: true,
+                role: 'admin',
+                memberId: newAdmin.id,
+                updatedAt: Date.now(),
+              });
+            } catch (e) {}
+          }
+          saveAdminVaultData(firebaseConfig, currentMember?.id || '10114-001', getSessionProofFromStorage(), unlockedPiiMapRef.current);
           const next = [newAdmin, ...members];
           setMembers(next);
           setSelectedMemberId(newAdmin.id);
@@ -2232,8 +2974,16 @@
               return false;
             }
           } catch (e) {}
-          const currentPass = target.password || (target.role === 'admin' || target.id === '10114-001' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC);
-          if (!verifySecret(oldPass, currentPass)) {
+          const tRole = target.role === 'admin' || target.id === '10114-001' ? 'admin' : 'member';
+          const defaultHash = tRole === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
+          const oldH2 = hashPassword(oldPass);
+          const sessionProof = getSessionProofFromStorage();
+          const isOldValid =
+            (target.password && verifySecret(oldPass, target.password)) ||
+            (currentMember?.id === memberId && sessionProof && hashPassword(sessionProof) === oldH2) ||
+            isLocalVerifiedAuth(getVaultAuthDocId(tRole, memberId, oldH2)) ||
+            (!target.hasCustomPass && oldH2 === defaultHash);
+          if (!isOldValid) {
             checkAndRecordPassChangeGuard(false);
             showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
             return false;
@@ -2245,10 +2995,12 @@
           checkAndRecordPassChangeGuard(true);
           const cleanNew = newPass.trim();
           const hashedPass = hashPassword(cleanNew);
-          const nextMembers = members.map(m => m.id === memberId ? { ...m, password: hashedPass } : m);
+          const hasCustomPass = hashedPass !== defaultHash;
+          rotateVaultPassword(firebaseConfig, tRole, memberId, oldPass, cleanNew, unlockedPiiMapRef.current);
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, hasCustomPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
-            setCurrentMember(prev => ({ ...prev, password: hashedPass }));
+            setCurrentMember(prev => ({ ...prev, hasCustomPass }));
             if (currentRole !== 'parent') {
               try {
                 sessionStorage.setItem('frc10114_session_sig', createSessionSig(currentRole, memberId, cleanNew));
@@ -2256,11 +3008,11 @@
             }
           }
           if (draftMember && draftMember.id === memberId) {
-            setDraftMember(prev => ({ ...prev, password: hashedPass, _newPassword: '' }));
+            setDraftMember(prev => ({ ...prev, hasCustomPass, _newPassword: '' }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('密碼已成功更新！', '已採用雙層單向不可逆雜湊安全儲存，請牢記您的新密碼', 'success');
+          showToast('密碼已成功更新！', '已存入雲端獨立加密保險箱，主資料表不留存任何密碼雜湊', 'success');
           return true;
         };
 
@@ -2278,8 +3030,14 @@
               return false;
             }
           } catch (e) {}
-          const currentPass = target.parentPassword || target.password || DEFAULT_MEMBER_ENC;
-          if (!verifySecret(oldPass, currentPass)) {
+          const oldH2 = hashPassword(oldPass);
+          const sessionProof = getSessionProofFromStorage();
+          const isOldValid =
+            (target.parentPassword && verifySecret(oldPass, target.parentPassword)) ||
+            (currentRole === 'parent' && currentMember?.id === studentId && sessionProof && hashPassword(sessionProof) === oldH2) ||
+            isLocalVerifiedAuth(getVaultAuthDocId('parent', studentId, oldH2)) ||
+            (!target.hasCustomParentPass && (isLocalVerifiedAuth(getVaultAuthDocId('member', studentId, oldH2)) || oldH2 === DEFAULT_MEMBER_ENC));
+          if (!isOldValid) {
             checkAndRecordPassChangeGuard(false);
             showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
             return false;
@@ -2291,10 +3049,12 @@
           checkAndRecordPassChangeGuard(true);
           const cleanNew = newPass.trim();
           const hashedPass = hashPassword(cleanNew);
-          const nextMembers = members.map(m => m.id === studentId ? { ...m, parentPassword: hashedPass } : m);
+          const hasCustomParentPass = hashedPass !== DEFAULT_MEMBER_ENC;
+          rotateVaultPassword(firebaseConfig, 'parent', studentId, oldPass, cleanNew, unlockedPiiMapRef.current);
+          const nextMembers = members.map(m => m.id === studentId ? { ...m, hasCustomParentPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === studentId) {
-            setCurrentMember(prev => ({ ...prev, parentPassword: hashedPass }));
+            setCurrentMember(prev => ({ ...prev, hasCustomParentPass }));
             if (currentRole === 'parent') {
               try {
                 sessionStorage.setItem('frc10114_session_sig', createSessionSig('parent', studentId, cleanNew));
@@ -2302,11 +3062,11 @@
             }
           }
           if (draftMember && draftMember.id === studentId) {
-            setDraftMember(prev => ({ ...prev, parentPassword: hashedPass }));
+            setDraftMember(prev => ({ ...prev, hasCustomParentPass }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('家長安全密碼變更成功！', '已採用雙層單向不可逆雜湊安全儲存，下次登入請使用新密碼', 'success');
+          showToast('家長安全密碼變更成功！', '已存入雲端獨立加密保險箱，下次登入請使用新密碼', 'success');
           return true;
         };
 
@@ -2353,8 +3113,10 @@
           setIsLoginModalOpen(false);
         };
 
-        // Logout handler (resets authentication and returns to login screen)
+        // Logout handler (resets authentication, wipes unlocked PII from memory, and returns to login screen)
         const handleLogout = () => {
+          unlockedPiiMapRef.current = {};
+          setMembers(prev => normalizeMembersFromStorage(encodeMembersForStorage(prev), {}));
           setIsAuthenticated(false);
           try {
             sessionStorage.removeItem('frc10114_logged_in');
@@ -2362,8 +3124,9 @@
             sessionStorage.removeItem('frc10114_member_id');
             sessionStorage.removeItem('frc10114_parent_student');
             sessionStorage.removeItem('frc10114_session_sig');
+            sessionStorage.removeItem('frc10114_verified_auth_id');
           } catch (e) {}
-          showToast('已登出系統', '感謝使用 FRC 10114 隊務系統，歡迎隨時登入', 'info');
+          showToast('已登出系統', '已清除記憶體內之解密個資，感謝使用 FRC 10114 隊務系統', 'info');
         };
 
         // Security Guard 1: Anti-Tampering Role & Cryptographic SCRAM Session Verification
@@ -2428,6 +3191,7 @@
           const IDLE_LIMIT_MS = 30 * 60 * 1000; // 30 minutes
           const timer = setInterval(() => {
             if (Date.now() - lastActivityRef.current > IDLE_LIMIT_MS) {
+              unlockedPiiMapRef.current = {};
               setIsAuthenticated(false);
               try {
                 sessionStorage.removeItem('frc10114_logged_in');
@@ -2472,12 +3236,49 @@
           const cleanedDraft = { ...draftMember };
           const pendingNewPass = cleanedDraft._newPassword ? cleanedDraft._newPassword.trim() : '';
           delete cleanedDraft._newPassword;
+          delete cleanedDraft.password;
+          const tRole = cleanedDraft.role === 'admin' || cleanedDraft.id === '10114-001' ? 'admin' : 'member';
+          const defaultHash = tRole === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
+          const hasCustomPass = pendingNewPass
+            ? hashPassword(pendingNewPass) !== defaultHash
+            : Boolean(cleanedDraft.hasCustomPass);
           const normalizedDraft = {
             ...cleanedDraft,
-            password: pendingNewPass
-              ? hashPassword(pendingNewPass)
-              : hashPassword(cleanedDraft.password || (cleanedDraft.role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
+            hasCustomPass,
           };
+
+          // Save PII to isolated Admin Vault (NEVER to public team_state)
+          unlockedPiiMapRef.current = {
+            ...unlockedPiiMapRef.current,
+            [normalizedDraft.id]: extractMemberPii(normalizedDraft),
+          };
+          if (pendingNewPass) {
+            const newAuthId = getVaultAuthDocId(tRole, normalizedDraft.id, pendingNewPass);
+            recordLocalVerifiedAuth(newAuthId);
+            const db = initFirestore(firebaseConfig);
+            if (db) {
+              try {
+                db.collection('frc10114_vault').doc(newAuthId).set({
+                  valid: true,
+                  role: tRole,
+                  memberId: normalizedDraft.id,
+                  updatedAt: Date.now(),
+                });
+              } catch (e) {}
+            }
+          }
+          const activeAdminProof = (currentMember.id === normalizedDraft.id && pendingNewPass)
+            ? deriveClientProof(pendingNewPass)
+            : getSessionProofFromStorage();
+          saveAdminVaultData(
+            firebaseConfig,
+            currentMember?.id || '10114-001',
+            activeAdminProof,
+            unlockedPiiMapRef.current,
+            normalizedDraft.id,
+            pendingNewPass
+          );
+
           const nextMembers = members.map(m =>
             (m.id === selectedMemberId || m.id === normalizedDraft.id) ? normalizedDraft : m
           );
@@ -2493,7 +3294,7 @@
           setSelectedMemberId(normalizedDraft.id);
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('資料儲存成功', `隊員「${normalizedDraft.name}」已更新並即時同步至雲端！`, 'success');
+          showToast('資料儲存成功', `隊員「${normalizedDraft.name}」公開名冊與加密個資保險箱已分別同步！`, 'success');
         };
 
         const handleUpdateProfile = (updatedProfile) => {
@@ -2509,10 +3310,29 @@
           const nextMembers = members.map(m => {
             if (m.id !== updatedProfile.id) return m;
             if (currentRole !== 'admin') {
-              safeUpdated = { ...updatedProfile, role: m.role, departments: m.departments };
+              safeUpdated = { ...updatedProfile, role: m.role, departments: m.departments, hasCustomPass: m.hasCustomPass, hasCustomParentPass: m.hasCustomParentPass };
             }
             return { ...m, ...safeUpdated };
           });
+
+          // Store sensitive PII strictly in isolated Cloud Vault (frc10114_vault), never in team_state
+          const myPii = extractMemberPii(safeUpdated);
+          unlockedPiiMapRef.current = {
+            ...unlockedPiiMapRef.current,
+            [safeUpdated.id]: myPii,
+          };
+          if (currentRole === 'admin') {
+            saveAdminVaultData(
+              firebaseConfig,
+              currentMember?.id || '10114-001',
+              getSessionProofFromStorage(),
+              unlockedPiiMapRef.current,
+              safeUpdated.id
+            );
+          } else {
+            saveMemberVaultData(firebaseConfig, safeUpdated.id, getSessionProofFromStorage(), myPii);
+          }
+
           setMembers(nextMembers);
           setCurrentMember(prev => ({ ...prev, ...safeUpdated }));
           if (draftMember && draftMember.id === updatedProfile.id) {
@@ -2520,7 +3340,11 @@
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('個人資料儲存成功！', '您的資料與理念已即時同步至雲端', 'success');
+          if (currentRole !== 'admin' && !safeUpdated.hasCustomPass && hasMemberPii(safeUpdated)) {
+            showToast('個資已加密傳送予教練！', '提醒：請變更預設密碼 (10114)，以便下次登入時能自行解鎖檢視個資', 'info');
+          } else {
+            showToast('個人資料儲存成功！', '敏感個資已存入獨立加密保險箱，不會外洩於公開資料表', 'success');
+          }
           return true;
         };
 
@@ -2885,8 +3709,25 @@
             return;
           }
           const toSync = {};
-          if (payload.members) {
-            const normMembers = normalizeMembersFromStorage(payload.members);
+          if (payload.members && Array.isArray(payload.members)) {
+            const restoredPiiMap = { ...unlockedPiiMapRef.current };
+            payload.members.forEach(m => {
+              if (m && m.id && hasMemberPii(m)) {
+                restoredPiiMap[m.id] = extractMemberPii(m);
+              }
+            });
+            unlockedPiiMapRef.current = restoredPiiMap;
+            const db = initFirestore(firebaseConfig);
+            if (db && hasLegacySecretFields(payload.members)) {
+              migrateLegacyMembersToVault(db, payload.members);
+            }
+            saveAdminVaultData(
+              firebaseConfig,
+              currentMember?.id || '10114-001',
+              getSessionProofFromStorage(),
+              unlockedPiiMapRef.current
+            );
+            const normMembers = normalizeMembersFromStorage(payload.members, unlockedPiiMapRef.current);
             setMembers(normMembers);
             try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normMembers))); } catch (e) {}
             toSync.members = normMembers;
@@ -3668,7 +4509,7 @@
                                 <label className="block text-xs font-bold text-zinc-700 mb-1">6. 電子郵件 (Email) *</label>
                                 <input
                                   type="email"
-                                  value={draftMember.email}
+                                  value={draftMember.email || ''}
                                   onChange={(e) => setDraftMember({ ...draftMember, email: e.target.value })}
                                   className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                                 />
@@ -14071,64 +14912,85 @@
           }
         }, [studentMembers]);
 
-        // Admin Submit Handler
-        const handleAdminSubmit = (e) => {
+        const [isVerifying, setIsVerifying] = useState(false);
+
+        // Admin Submit Handler (Verifies against isolated frc10114_vault)
+        const handleAdminSubmit = async (e) => {
           e.preventDefault();
-          if (isLockedOut) return;
+          if (isLockedOut || isVerifying) return;
           const targetAdmin = adminMembers.find(m => m.id === selectedAdminId) || adminMembers[0] || members[0];
-          const expected = targetAdmin?.password || DEFAULT_ADMIN_ENC;
-          if (!verifySecret(adminPassword.trim(), expected)) {
+          const cleanPass = adminPassword.trim();
+          if (!cleanPass) {
+            setAdminErr('請輸入管理員密碼');
+            return;
+          }
+          setIsVerifying(true);
+          const ok = await verifyAccountCredential(getSavedFirebaseConfig(), 'admin', targetAdmin, cleanPass);
+          setIsVerifying(false);
+          if (!ok) {
             recordFailedAttempt('管理員密碼錯誤！請確認後重新輸入', setAdminErr);
             return;
           }
           clearLoginGuard();
           setAdminErr('');
-          onSelectRole('admin', targetAdmin, undefined, adminPassword.trim());
+          onSelectRole('admin', targetAdmin, undefined, cleanPass);
         };
 
-        // Member Submit Handler
-        const handleMemberSubmit = (e) => {
+        // Member Submit Handler (Verifies against isolated frc10114_vault)
+        const handleMemberSubmit = async (e) => {
           e.preventDefault();
-          if (isLockedOut) return;
+          if (isLockedOut || isVerifying) return;
           const targetMember = studentMembers.find(m => m.id === memberId) || studentMembers[0];
           if (!targetMember) {
             setMemberErr('無可登入的隊員帳號');
             return;
           }
-          const expected = targetMember?.password || DEFAULT_MEMBER_ENC;
-          if (!verifySecret(memberPassword.trim(), expected)) {
+          const cleanPass = memberPassword.trim();
+          if (!cleanPass) {
+            setMemberErr('請輸入隊員登入密碼');
+            return;
+          }
+          setIsVerifying(true);
+          const ok = await verifyAccountCredential(getSavedFirebaseConfig(), 'member', targetMember, cleanPass);
+          setIsVerifying(false);
+          if (!ok) {
             recordFailedAttempt('隊員密碼錯誤！請確認後重新輸入', setMemberErr);
             return;
           }
           clearLoginGuard();
           setMemberErr('');
-          onSelectRole('member', targetMember, undefined, memberPassword.trim());
+          onSelectRole('member', targetMember, undefined, cleanPass);
         };
 
-        // Parent Submit Handler
-        const handleParentSubmit = (e) => {
+        // Parent Submit Handler (Verifies against isolated frc10114_vault)
+        const handleParentSubmit = async (e) => {
           e.preventDefault();
-          if (isLockedOut) return;
+          if (isLockedOut || isVerifying) return;
           const selectedStudent = studentMembers.find(m => m.id === parentStudentId) || studentMembers[0];
           if (!selectedStudent) {
             setParentErr('請先選擇欲關心的學生');
             return;
           }
-          if (selectedStudent?.parentPassword) {
-            if (!verifySecret(parentPassword.trim(), selectedStudent.parentPassword)) {
-              recordFailedAttempt('家長安全通關碼錯誤！若曾變更密碼，請輸入新設定的家長密碼', setParentErr);
-              return;
-            }
-          } else {
-            const expectedPass = selectedStudent?.password || DEFAULT_MEMBER_ENC;
-            if (!verifySecret(parentPassword.trim(), expectedPass) && !verifySecret(parentPassword.trim(), DEFAULT_MEMBER_ENC)) {
-              recordFailedAttempt('家長安全通關碼錯誤！請確認後重新輸入', setParentErr);
-              return;
-            }
+          const cleanPass = parentPassword.trim();
+          if (!cleanPass) {
+            setParentErr('請輸入家長安全通關密碼');
+            return;
+          }
+          setIsVerifying(true);
+          const ok = await verifyAccountCredential(getSavedFirebaseConfig(), 'parent', selectedStudent, cleanPass);
+          setIsVerifying(false);
+          if (!ok) {
+            recordFailedAttempt(
+              selectedStudent?.hasCustomParentPass
+                ? '家長安全通關碼錯誤！若曾變更密碼，請輸入新設定的家長密碼'
+                : '家長安全通關碼錯誤！請確認後重新輸入',
+              setParentErr
+            );
+            return;
           }
           clearLoginGuard();
           setParentErr('');
-          onSelectRole('parent', selectedStudent, selectedStudent.name, parentPassword.trim());
+          onSelectRole('parent', selectedStudent, selectedStudent.name, cleanPass);
         };
 
         const currentSelAdmin = adminMembers.find(m => m.id === selectedAdminId) || adminMembers[0];
@@ -14427,7 +15289,7 @@
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-xs font-bold text-zinc-700">家長安全通關密碼</label>
                         <span className="text-[11px] text-zinc-400">
-                          {currentSelStudentForParent?.parentPassword ? '已自訂家長密碼' : '安全通關驗證'}
+                          {(currentSelStudentForParent?.hasCustomParentPass || currentSelStudentForParent?.parentPassword) ? '已自訂家長密碼' : '安全通關驗證'}
                         </span>
                       </div>
                       <div className="relative">
@@ -14436,7 +15298,7 @@
                           disabled={isLockedOut}
                           value={parentPassword}
                           onChange={(e) => { setParentPassword(e.target.value); setParentErr(''); }}
-                          placeholder={currentSelStudentForParent?.parentPassword ? "請輸入自訂的家長密碼" : "請輸入家長通關密碼"}
+                          placeholder={(currentSelStudentForParent?.hasCustomParentPass || currentSelStudentForParent?.parentPassword) ? "請輸入自訂的家長密碼" : "請輸入家長通關密碼"}
                           className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500 disabled:bg-zinc-100 disabled:text-zinc-400"
                         />
                         <button
