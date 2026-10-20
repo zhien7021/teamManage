@@ -1273,12 +1273,19 @@
         );
       };
 
-      // --- CSV & JSON EXPORT UTILITIES (UTF-8 BOM for Excel Compatibility) ---
+      // --- CSV & JSON EXPORT UTILITIES (UTF-8 BOM + CSV Formula Injection Protection) ---
+      function sanitizeCSVCell(val) {
+        const str = String(val ?? '');
+        // Prevent CSV Formula Injection when opened in Excel / Google Sheets
+        const safeStr = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+        return `"${safeStr.replace(/"/g, '""')}"`;
+      }
+
       function exportToCSV(filename, headers, rows) {
         const BOM = '\uFEFF';
         const csvRows = [
-          headers.map(h => `"${String(h ?? '').replace(/"/g, '""')}"`).join(','),
-          ...rows.map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
+          headers.map(h => sanitizeCSVCell(h)).join(','),
+          ...rows.map(row => row.map(cell => sanitizeCSVCell(cell)).join(','))
         ];
         const blob = new Blob([BOM + csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -1288,7 +1295,7 @@
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(a);
+        URL.revokeObjectURL(url);
       }
 
       function exportToJSON(filename, data) {
@@ -1300,7 +1307,7 @@
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(a);
+        URL.revokeObjectURL(url);
       }
 
       function getTodayDateStr() {
@@ -2667,39 +2674,19 @@
           showToast('已切換隊員', '已放棄先前未儲存的修改', 'info');
         };
 
-        // Reset factory seed
-        const handleResetFactory = () => {
-          if (window.confirm('確定要清除自訂紀錄並恢復為 FRC 10114 預設資料庫嗎？')) {
-            setMembers(INITIAL_MEMBERS);
-            setEvents(INITIAL_EVENTS);
-            setTasks(INITIAL_TASKS);
-            setPendingTasks(INITIAL_PENDING_TASKS);
-            setMaterials(INITIAL_MATERIALS);
-            setAttendance(INITIAL_ATTENDANCE);
-            setMachineReservations(INITIAL_MACHINE_RESERVATIONS);
-            setEduCategories(INITIAL_EDU_CATEGORIES);
-            setEduEquipment(INITIAL_EDU_EQUIPMENT);
-            setCustomSavedEventIds([3]);
-            localStorage.clear();
-            syncToCloud({
-              members: INITIAL_MEMBERS,
-              events: INITIAL_EVENTS,
-              tasks: INITIAL_TASKS,
-              pendingTasks: INITIAL_PENDING_TASKS,
-              materials: INITIAL_MATERIALS,
-              attendance: INITIAL_ATTENDANCE,
-              reservations: INITIAL_MACHINE_RESERVATIONS,
-              eduCategories: INITIAL_EDU_CATEGORIES,
-              eduEquipment: INITIAL_EDU_EQUIPMENT,
-            });
-            showToast('資料重設完成', '已還原為原廠示範資料庫', 'info');
-          }
-        };
-
-        // Restore from JSON backup payload
+        // Restore from JSON backup payload (Admin Only)
         const handleRestoreBackup = (payload) => {
+          if (currentRole !== 'admin') {
+            showToast('權限不足', '僅限管理員可執行系統備份還原', 'error');
+            return;
+          }
           const toSync = {};
-          if (payload.members) { setMembers(payload.members); toSync.members = payload.members; }
+          if (payload.members) {
+            const normMembers = normalizeMembersFromStorage(payload.members);
+            setMembers(normMembers);
+            try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normMembers))); } catch (e) {}
+            toSync.members = normMembers;
+          }
           if (payload.events) { setEvents(payload.events); toSync.events = payload.events; }
           if (payload.tasks) { setTasks(payload.tasks); toSync.tasks = payload.tasks; }
           if (payload.pendingTasks) { setPendingTasks(payload.pendingTasks); toSync.pendingTasks = payload.pendingTasks; }
@@ -2711,7 +2698,7 @@
           if (Object.keys(toSync).length > 0) {
             syncToCloud(toSync);
           }
-          showToast('系統資料還原成功！', '已從 JSON 備份檔恢復所有最新隊務紀錄', 'success');
+          showToast('系統資料還原成功！', '已從 JSON 備份檔恢復所有最新隊務紀錄並完成安全加密', 'success');
         };
 
         // Booking & Equipment actions
@@ -3002,15 +2989,6 @@
                     <Icon name="logout" className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
                     <span className="hidden sm:inline">登出系統</span>
                     <span className="sm:hidden">登出</span>
-                  </button>
-
-                  <button
-                    onClick={handleResetFactory}
-                    className="hidden lg:flex items-center gap-1 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-lg transition-colors whitespace-nowrap flex-shrink-0"
-                    title="恢復原廠示範資料"
-                  >
-                    <Icon name="revert" className="w-3.5 h-3.5" />
-                    <span>重設</span>
                   </button>
                 </div>
               </div>
@@ -12805,10 +12783,10 @@
             exportedAt: now.toISOString(),
             team: '新北市立錦和高中 FRC 10114 隊務管理系統',
             data: {
-              members,
+              members: encodeMembersForStorage(members),
               events,
               tasks,
-              materials,
+               materials,
               attendance,
               machineReservations,
               eduCategories,
