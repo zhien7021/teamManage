@@ -129,9 +129,47 @@
         }
       }
 
+      // Irreversible One-Way Password Hash (256-bit multi-round key stretching)
+      function hashPassword(plain) {
+        if (!plain) return '';
+        const str = String(plain);
+        if (str.startsWith('hash$')) return str;
+        const raw = str.startsWith('enc$') ? decodeSecret(str) : str;
+        const inputBytes = new TextEncoder().encode(`${SEC_SALT}::${raw}::FRC10114_V2`);
+        const state = new Uint32Array([
+          0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+          0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+        ]);
+        for (let round = 0; round < 256; round++) {
+          for (let i = 0; i < inputBytes.length; i++) {
+            const idx = (i + round) & 7;
+            let v = state[idx] ^ (inputBytes[i] + ((round * 131 + i * 17) & 0xffff));
+            v = Math.imul(v ^ (v >>> 16), 0x85ebca6b);
+            v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35);
+            v = (v ^ (v >>> 16)) >>> 0;
+            state[idx] = v;
+            state[(idx + 1) & 7] = (state[(idx + 1) & 7] + ((v << 7) | (v >>> 25))) >>> 0;
+          }
+        }
+        let hex = '';
+        for (let i = 0; i < 8; i++) {
+          hex += state[i].toString(16).padStart(8, '0');
+        }
+        return 'hash$' + hex;
+      }
+
       function verifySecret(input, stored) {
         if (!input && !stored) return true;
-        return String(input) === decodeSecret(stored);
+        if (!input || !stored) return false;
+        const s = String(stored);
+        const inp = String(input);
+        if (s.startsWith('hash$')) {
+          return hashPassword(inp) === s;
+        }
+        if (s.startsWith('enc$')) {
+          return inp === decodeSecret(s);
+        }
+        return inp === s;
       }
 
       function encodeMembersForStorage(membersList) {
@@ -139,8 +177,9 @@
         return membersList.map(m => {
           if (!m) return m;
           const out = { ...m };
-          if (out.password) out.password = encodeSecret(out.password);
-          if (out.parentPassword) out.parentPassword = encodeSecret(out.parentPassword);
+          if (out._newPassword !== undefined) delete out._newPassword;
+          if (out.password) out.password = hashPassword(out.password);
+          if (out.parentPassword) out.parentPassword = hashPassword(out.parentPassword);
           if (out.nationalId) out.nationalId = encodeSecret(out.nationalId);
           if (out.address) out.address = encodeSecret(out.address);
           if (out.passportName) out.passportName = encodeSecret(out.passportName);
@@ -154,16 +193,18 @@
         return membersList.map(m => {
           if (!m) return m;
           const role = m.role || (m.id === '10114-001' || (m.id && m.id.includes('-A')) ? 'admin' : 'member');
-          return {
+          const out = {
             ...m,
             role,
-            password: encodeSecret(m.password || (role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
-            parentPassword: m.parentPassword ? encodeSecret(m.parentPassword) : undefined,
+            password: hashPassword(m.password || (role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
+            parentPassword: m.parentPassword ? hashPassword(m.parentPassword) : undefined,
             nationalId: m.nationalId ? decodeSecret(m.nationalId) : m.nationalId,
             address: m.address ? decodeSecret(m.address) : m.address,
             passportName: m.passportName ? decodeSecret(m.passportName) : m.passportName,
             birthDate: m.birthDate ? decodeSecret(m.birthDate) : m.birthDate,
           };
+          if (out._newPassword !== undefined) delete out._newPassword;
+          return out;
         });
       }
 
@@ -1957,7 +1998,8 @@
             (draftMember.motto || '') !== (originalMember.motto || '') ||
             (draftMember.phone || '') !== (originalMember.phone || '') ||
             (draftMember.avatar || '') !== (originalMember.avatar || '') ||
-            decodeSecret(draftMember.password || '') !== decodeSecret(originalMember.password || '') ||
+            (draftMember.password || '') !== (originalMember.password || '') ||
+            Boolean(draftMember._newPassword && draftMember._newPassword.trim()) ||
             (draftMember.role || 'member') !== (originalMember.role || 'member') ||
             (draftMember.englishName || '') !== (originalMember.englishName || '') ||
             (draftMember.passportName || '') !== (originalMember.passportName || '') ||
@@ -2018,7 +2060,7 @@
             departments: adminData.departments && adminData.departments.length > 0 ? adminData.departments : ['機電整合組', '程式控制組', '行銷管理組'],
             motto: adminData.motto || '用心傳承，帶領 FRC 10114 勇闖巔峰！',
             role: 'admin',
-            password: encodeSecret(adminData.password || DEFAULT_ADMIN_ENC),
+            password: hashPassword(adminData.password || DEFAULT_ADMIN_ENC),
           };
           if (!newAdmin.name || !newAdmin.id) {
             showToast('建立失敗', '姓名與編號為必填項目', 'error');
@@ -2051,18 +2093,18 @@
             showToast('密碼變更失敗', '新密碼長度至少需 4 個字元', 'warning');
             return false;
           }
-          const encodedPass = encodeSecret(newPass.trim());
-          const nextMembers = members.map(m => m.id === memberId ? { ...m, password: encodedPass } : m);
+          const hashedPass = hashPassword(newPass.trim());
+          const nextMembers = members.map(m => m.id === memberId ? { ...m, password: hashedPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
-            setCurrentMember(prev => ({ ...prev, password: encodedPass }));
+            setCurrentMember(prev => ({ ...prev, password: hashedPass }));
           }
           if (draftMember && draftMember.id === memberId) {
-            setDraftMember(prev => ({ ...prev, password: encodedPass }));
+            setDraftMember(prev => ({ ...prev, password: hashedPass, _newPassword: '' }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('密碼已成功更新！', '請牢記您的新密碼', 'success');
+          showToast('密碼已成功更新！', '已採用單向不可逆雜湊安全儲存，請牢記您的新密碼', 'success');
           return true;
         };
 
@@ -2082,18 +2124,18 @@
             showToast('密碼變更失敗', '新密碼長度至少需 4 個字元', 'warning');
             return false;
           }
-          const encodedPass = encodeSecret(newPass.trim());
-          const nextMembers = members.map(m => m.id === studentId ? { ...m, parentPassword: encodedPass } : m);
+          const hashedPass = hashPassword(newPass.trim());
+          const nextMembers = members.map(m => m.id === studentId ? { ...m, parentPassword: hashedPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === studentId) {
-            setCurrentMember(prev => ({ ...prev, parentPassword: encodedPass }));
+            setCurrentMember(prev => ({ ...prev, parentPassword: hashedPass }));
           }
           if (draftMember && draftMember.id === studentId) {
-            setDraftMember(prev => ({ ...prev, parentPassword: encodedPass }));
+            setDraftMember(prev => ({ ...prev, parentPassword: hashedPass }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('家長安全密碼變更成功！', '請牢記您的新密碼，下次登入家長通道時請使用新密碼', 'success');
+          showToast('家長安全密碼變更成功！', '已採用單向不可逆雜湊安全儲存，下次登入請使用新密碼', 'success');
           return true;
         };
 
@@ -2110,13 +2152,19 @@
             const admin = memberObj || members.find(m => m.id === '10114-001') || members[0];
             setCurrentMember(admin);
             setActiveTab('profile');
-            try { sessionStorage.setItem('frc10114_member_id', admin.id); } catch (e) {}
+            try {
+              sessionStorage.setItem('frc10114_member_id', admin.id);
+              sessionStorage.setItem('frc10114_session_sig', hashPassword(`admin:${admin.id}:SESSION_SIG`));
+            } catch (e) {}
             showToast('歡迎管理員教練', '已進入 FRC 10114 管理後台', 'success');
           } else if (role === 'member') {
             const m = memberObj || members.find(x => x.id === '10114-002') || members[0];
             setCurrentMember(m);
             setActiveTab('profile');
-            try { sessionStorage.setItem('frc10114_member_id', m.id); } catch (e) {}
+            try {
+              sessionStorage.setItem('frc10114_member_id', m.id);
+              sessionStorage.setItem('frc10114_session_sig', hashPassword(`member:${m.id}:SESSION_SIG`));
+            } catch (e) {}
             showToast(`歡迎隊員 ${m.name}`, `已進入個人專屬頁面 (所屬：${m.departments.join(' / ')})`, 'success');
           } else if (role === 'parent') {
             const student = memberObj || members.find(m => m.name === studentName) || members.find(m => m.role !== 'admin') || members[0];
@@ -2127,6 +2175,7 @@
             try {
               sessionStorage.setItem('frc10114_parent_student', name);
               sessionStorage.setItem('frc10114_member_id', student.id);
+              sessionStorage.setItem('frc10114_session_sig', hashPassword(`parent:${student.id}:SESSION_SIG`));
             } catch (e) {}
             showToast('家長關心專區已就緒', `歡迎關心 ${name} 的留校實作進度`, 'info');
           }
@@ -2141,9 +2190,87 @@
             sessionStorage.removeItem('frc10114_role');
             sessionStorage.removeItem('frc10114_member_id');
             sessionStorage.removeItem('frc10114_parent_student');
+            sessionStorage.removeItem('frc10114_session_sig');
           } catch (e) {}
           showToast('已登出系統', '感謝使用 FRC 10114 隊務系統，歡迎隨時登入', 'info');
         };
+
+        // Security Guard 1: Anti-Tampering Role & Session Verification
+        useEffect(() => {
+          if (!isAuthenticated) return;
+          if (currentRole === 'admin') {
+            const matched = members.find(m => m.id === currentMember?.id);
+            const isValidAdmin = matched && (
+              matched.role === 'admin' ||
+              matched.id === '10114-001' ||
+              (matched.id && matched.id.startsWith('10114-ADM'))
+            );
+            if (!isValidAdmin) {
+              setIsAuthenticated(false);
+              try {
+                sessionStorage.removeItem('frc10114_logged_in');
+                sessionStorage.removeItem('frc10114_role');
+                sessionStorage.removeItem('frc10114_member_id');
+                sessionStorage.removeItem('frc10114_parent_student');
+                sessionStorage.removeItem('frc10114_session_sig');
+              } catch (e) {}
+              showToast('安全防護攔截', '偵測到異常的權限狀態變更，系統已強制登出', 'error');
+              return;
+            }
+          }
+          try {
+            const sig = sessionStorage.getItem('frc10114_session_sig');
+            const memId = sessionStorage.getItem('frc10114_member_id') || currentMember?.id || '';
+            const roleInStorage = sessionStorage.getItem('frc10114_role') || currentRole;
+            const expectedSig = hashPassword(`${ currentRole }:${ currentMember?.id || '' }:SESSION_SIG`);
+            if (!sig) {
+              sessionStorage.setItem('frc10114_session_sig', expectedSig);
+            } else if (roleInStorage !== currentRole || sig !== hashPassword(`${ roleInStorage }:${ memId }:SESSION_SIG`)) {
+              setIsAuthenticated(false);
+              sessionStorage.removeItem('frc10114_logged_in');
+              sessionStorage.removeItem('frc10114_role');
+              sessionStorage.removeItem('frc10114_member_id');
+              sessionStorage.removeItem('frc10114_parent_student');
+              sessionStorage.removeItem('frc10114_session_sig');
+              showToast('安全防護攔截', '偵測到工作階段憑證異常竄改，系統已強制登出', 'error');
+            }
+          } catch (e) {}
+        }, [isAuthenticated, currentRole, currentMember, members]);
+
+        // Security Guard 2: 30-Minute Idle Auto-Logout for Shared Workshop Computers
+        const lastActivityRef = React.useRef(Date.now());
+        useEffect(() => {
+          if (!isAuthenticated) return;
+          lastActivityRef.current = Date.now();
+          let lastRecordTime = 0;
+          const updateActivity = () => {
+            const now = Date.now();
+            if (now - lastRecordTime > 3000) {
+              lastActivityRef.current = now;
+              lastRecordTime = now;
+            }
+          };
+          const eventsList = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+          eventsList.forEach(ev => window.addEventListener(ev, updateActivity, { passive: true }));
+          const IDLE_LIMIT_MS = 30 * 60 * 1000; // 30 minutes
+          const timer = setInterval(() => {
+            if (Date.now() - lastActivityRef.current > IDLE_LIMIT_MS) {
+              setIsAuthenticated(false);
+              try {
+                sessionStorage.removeItem('frc10114_logged_in');
+                sessionStorage.removeItem('frc10114_role');
+                sessionStorage.removeItem('frc10114_member_id');
+                sessionStorage.removeItem('frc10114_parent_student');
+                sessionStorage.removeItem('frc10114_session_sig');
+              } catch (e) {}
+              showToast('閒置安全自動登出', '您已超過 30 分鐘未操作系統，為保護公用電腦帳號安全已自動登出', 'warning');
+            }
+          }, 15000);
+          return () => {
+            eventsList.forEach(ev => window.removeEventListener(ev, updateActivity));
+            clearInterval(timer);
+          };
+        }, [isAuthenticated]);
 
         // Switch member with unsaved warning
         const handleSwitchMember = (nextId) => {
@@ -2165,9 +2292,14 @@
             showToast('儲存失敗', '請至少勾選一個組別', 'warning');
             return;
           }
+          const cleanedDraft = { ...draftMember };
+          const pendingNewPass = cleanedDraft._newPassword ? cleanedDraft._newPassword.trim() : '';
+          delete cleanedDraft._newPassword;
           const normalizedDraft = {
-            ...draftMember,
-            password: encodeSecret(draftMember.password || (draftMember.role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
+            ...cleanedDraft,
+            password: pendingNewPass
+              ? hashPassword(pendingNewPass)
+              : hashPassword(cleanedDraft.password || (cleanedDraft.role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC)),
           };
           const nextMembers = members.map(m =>
             (m.id === selectedMemberId || m.id === normalizedDraft.id) ? normalizedDraft : m
@@ -3478,19 +3610,28 @@
 
                             <div>
                               <div className="flex items-center justify-between mb-1">
-                                <label className="text-xs font-bold text-zinc-700">登入密碼 (可直接修改或重設)</label>
-                                <span className="text-[10px] text-zinc-400">
-                                  已啟用安全遮罩與加密保護
+                                <label className="text-xs font-bold text-zinc-700">重設登入密碼 (單向不可逆雜湊保護)</label>
+                                <span className="text-[10px] text-emerald-600 font-semibold">
+                                  🔒 單向雜湊加密保護中
                                 </span>
                               </div>
                               <input
                                 type="password"
-                                value={decodeSecret(draftMember.password || (draftMember.role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC))}
-                                onChange={(e) => setDraftMember({ ...draftMember, password: encodeSecret(e.target.value) })}
-                                placeholder="輸入新密碼以重設"
+                                value={draftMember._newPassword || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDraftMember({
+                                    ...draftMember,
+                                    _newPassword: val,
+                                    password: val.trim()
+                                      ? hashPassword(val.trim())
+                                      : (originalMember?.password || draftMember.password),
+                                  });
+                                }}
+                                placeholder="目前已設定加密雜湊密碼（若需重設請輸入新密碼，留空則保持原密碼）"
                                 className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
                               />
-                              <p className="text-[10px] text-zinc-400 mt-1">變更後點擊下方「儲存正式名冊」即生效，隊員/教練便可使用新密碼登入系統。</p>
+                              <p className="text-[10px] text-zinc-400 mt-1">密碼採單向不可逆雜湊保護，無法反推原密碼；輸入新密碼並點擊下方「儲存正式名冊」即可重設。</p>
                             </div>
                           </div>
 
@@ -13617,6 +13758,85 @@
         const [showParentPass, setShowParentPass] = useState(false);
         const [parentErr, setParentErr] = useState('');
 
+        // Brute-Force Rate Limiting State (Max 5 failed attempts -> 60s lockout)
+        const MAX_LOGIN_ATTEMPTS = 5;
+        const LOCKOUT_DURATION_MS = 60 * 1000;
+        const [failCount, setFailCount] = useState(() => {
+          try {
+            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            return Number(saved.failCount) || 0;
+          } catch (e) {
+            return 0;
+          }
+        });
+        const [lockUntil, setLockUntil] = useState(() => {
+          try {
+            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            return Number(saved.lockUntil) || 0;
+          } catch (e) {
+            return 0;
+          }
+        });
+        const [lockRemainingSec, setLockRemainingSec] = useState(() => {
+          try {
+            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            const until = Number(saved.lockUntil) || 0;
+            return until > Date.now() ? Math.ceil((until - Date.now()) / 1000) : 0;
+          } catch (e) {
+            return 0;
+          }
+        });
+
+        useEffect(() => {
+          if (lockUntil <= Date.now()) {
+            setLockRemainingSec(0);
+            return;
+          }
+          setLockRemainingSec(Math.ceil((lockUntil - Date.now()) / 1000));
+          const interval = setInterval(() => {
+            const diff = Math.ceil((lockUntil - Date.now()) / 1000);
+            if (diff <= 0) {
+              setLockRemainingSec(0);
+              setLockUntil(0);
+              setFailCount(0);
+              try { localStorage.removeItem('frc10114_login_guard'); } catch (e) {}
+              clearInterval(interval);
+            } else {
+              setLockRemainingSec(diff);
+            }
+          }, 1000);
+          return () => clearInterval(interval);
+        }, [lockUntil]);
+
+        const recordFailedAttempt = (baseMsg, setErrFn) => {
+          const nextCount = failCount + 1;
+          if (nextCount >= MAX_LOGIN_ATTEMPTS) {
+            const until = Date.now() + LOCKOUT_DURATION_MS;
+            setFailCount(0);
+            setLockUntil(until);
+            setLockRemainingSec(60);
+            try {
+              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: 0, lockUntil: until }));
+            } catch (e) {}
+            setErrFn('連續密碼錯誤達 5 次！系統已啟動防暴力破解保護，暫時鎖定 60 秒。');
+          } else {
+            setFailCount(nextCount);
+            try {
+              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: nextCount, lockUntil: 0 }));
+            } catch (e) {}
+            setErrFn(`${baseMsg}（剩餘嘗試次數：${MAX_LOGIN_ATTEMPTS - nextCount} 次）`);
+          }
+        };
+
+        const clearLoginGuard = () => {
+          setFailCount(0);
+          setLockUntil(0);
+          setLockRemainingSec(0);
+          try { localStorage.removeItem('frc10114_login_guard'); } catch (e) {}
+        };
+
+        const isLockedOut = lockRemainingSec > 0;
+
         useEffect(() => {
           if (adminMembers.length > 0 && !adminMembers.some(a => a.id === selectedAdminId)) {
             setSelectedAdminId(adminMembers[0].id);
@@ -13638,12 +13858,14 @@
         // Admin Submit Handler
         const handleAdminSubmit = (e) => {
           e.preventDefault();
+          if (isLockedOut) return;
           const targetAdmin = adminMembers.find(m => m.id === selectedAdminId) || adminMembers[0] || members[0];
           const expected = targetAdmin?.password || DEFAULT_ADMIN_ENC;
           if (!verifySecret(adminPassword.trim(), expected)) {
-            setAdminErr('管理員密碼錯誤！請確認後重新輸入');
+            recordFailedAttempt('管理員密碼錯誤！請確認後重新輸入', setAdminErr);
             return;
           }
+          clearLoginGuard();
           setAdminErr('');
           onSelectRole('admin', targetAdmin);
         };
@@ -13651,6 +13873,7 @@
         // Member Submit Handler
         const handleMemberSubmit = (e) => {
           e.preventDefault();
+          if (isLockedOut) return;
           const targetMember = studentMembers.find(m => m.id === memberId) || studentMembers[0];
           if (!targetMember) {
             setMemberErr('無可登入的隊員帳號');
@@ -13658,9 +13881,10 @@
           }
           const expected = targetMember?.password || DEFAULT_MEMBER_ENC;
           if (!verifySecret(memberPassword.trim(), expected)) {
-            setMemberErr('隊員密碼錯誤！請確認後重新輸入');
+            recordFailedAttempt('隊員密碼錯誤！請確認後重新輸入', setMemberErr);
             return;
           }
+          clearLoginGuard();
           setMemberErr('');
           onSelectRole('member', targetMember);
         };
@@ -13668,6 +13892,7 @@
         // Parent Submit Handler
         const handleParentSubmit = (e) => {
           e.preventDefault();
+          if (isLockedOut) return;
           const selectedStudent = studentMembers.find(m => m.id === parentStudentId) || studentMembers[0];
           if (!selectedStudent) {
             setParentErr('請先選擇欲關心的學生');
@@ -13675,16 +13900,17 @@
           }
           if (selectedStudent?.parentPassword) {
             if (!verifySecret(parentPassword.trim(), selectedStudent.parentPassword)) {
-              setParentErr('家長安全通關碼錯誤！若曾變更密碼，請輸入新設定的家長密碼。');
+              recordFailedAttempt('家長安全通關碼錯誤！若曾變更密碼，請輸入新設定的家長密碼', setParentErr);
               return;
             }
           } else {
             const expectedPass = selectedStudent?.password || DEFAULT_MEMBER_ENC;
             if (!verifySecret(parentPassword.trim(), expectedPass) && !verifySecret(parentPassword.trim(), DEFAULT_MEMBER_ENC)) {
-              setParentErr('家長安全通關碼錯誤！請確認後重新輸入');
+              recordFailedAttempt('家長安全通關碼錯誤！請確認後重新輸入', setParentErr);
               return;
             }
           }
+          clearLoginGuard();
           setParentErr('');
           onSelectRole('parent', selectedStudent, selectedStudent.name);
         };
@@ -13757,6 +13983,18 @@
               </div>
 
               <div className="p-6">
+                {isLockedOut && (
+                  <div className="mb-4 p-3.5 bg-rose-50 border-2 border-rose-300 rounded-xl text-xs text-rose-900 flex items-start gap-2.5 animate-pulse">
+                    <Icon name="lock" className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-extrabold text-rose-950">安全鎖定保護啟動中（剩餘 {lockRemainingSec} 秒）</div>
+                      <div className="text-[11px] text-rose-700 mt-0.5">
+                        偵測到密碼連續輸入錯誤達 5 次，系統已暫停登入驗證以防止暴力破解，請稍候再試。
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* 1. ADMIN LOGIN */}
                 {tab === 'admin' && (
                   <form onSubmit={handleAdminSubmit} className="space-y-4">
@@ -13808,10 +14046,11 @@
                       <div className="relative">
                         <input
                           type={showAdminPass ? 'text' : 'password'}
+                          disabled={isLockedOut}
                           value={adminPassword}
                           onChange={(e) => { setAdminPassword(e.target.value); setAdminErr(''); }}
                           placeholder="請輸入管理員密碼"
-                          className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                          className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500 disabled:bg-zinc-100 disabled:text-zinc-400"
                         />
                         <button
                           type="button"
@@ -13832,10 +14071,11 @@
 
                     <button
                       type="submit"
-                      className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
+                      disabled={isLockedOut}
+                      className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
                     >
                       <Icon name="lock" className="w-4 h-4 text-orange-400" />
-                      <span>驗證密碼並登入管理員</span>
+                      <span>{isLockedOut ? `安全鎖定中 (${lockRemainingSec}s)` : '驗證密碼並登入管理員'}</span>
                     </button>
                   </form>
                 )}
@@ -13887,10 +14127,11 @@
                       <div className="relative">
                         <input
                           type={showMemberPass ? 'text' : 'password'}
+                          disabled={isLockedOut}
                           value={memberPassword}
                           onChange={(e) => { setMemberPassword(e.target.value); setMemberErr(''); }}
                           placeholder="請輸入隊員密碼"
-                          className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                          className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500 disabled:bg-zinc-100 disabled:text-zinc-400"
                         />
                         <button
                           type="button"
@@ -13911,10 +14152,11 @@
 
                     <button
                       type="submit"
-                      className="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
+                      disabled={isLockedOut}
+                      className="w-full py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
                     >
                       <Icon name="lock" className="w-4 h-4 text-white" />
-                      <span>以隊員身分登入</span>
+                      <span>{isLockedOut ? `安全鎖定中 (${lockRemainingSec}s)` : '以隊員身分登入'}</span>
                     </button>
                   </form>
                 )}
@@ -13975,10 +14217,11 @@
                       <div className="relative">
                         <input
                           type={showParentPass ? 'text' : 'password'}
+                          disabled={isLockedOut}
                           value={parentPassword}
                           onChange={(e) => { setParentPassword(e.target.value); setParentErr(''); }}
                           placeholder={currentSelStudentForParent?.parentPassword ? "請輸入自訂的家長密碼" : "請輸入家長通關密碼"}
-                          className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                          className="w-full p-2.5 pr-10 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:ring-2 focus:ring-orange-500 disabled:bg-zinc-100 disabled:text-zinc-400"
                         />
                         <button
                           type="button"
@@ -13999,10 +14242,11 @@
 
                     <button
                       type="submit"
-                      className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
+                      disabled={isLockedOut}
+                      className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
                     >
                       <Icon name="heart" className="w-4 h-4 text-orange-400" />
-                      <span>驗證密碼並進入家長專區</span>
+                      <span>{isLockedOut ? `安全鎖定中 (${lockRemainingSec}s)` : '驗證密碼並進入家長專區'}</span>
                     </button>
                   </form>
                 )}
