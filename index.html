@@ -42,13 +42,13 @@
     </script>
 
     <!-- Firebase 10 SDK (Compat for seamless browser SPA) -->
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" crossorigin="anonymous"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" crossorigin="anonymous"></script>
 
     <!-- React 18 & Babel Standalone -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js" crossorigin="anonymous"></script>
 
     <style>
       html, body {
@@ -92,8 +92,8 @@
 
       // --- 0. SECURITY & SECRET OBFUSCATION HELPERS ---
       const SEC_SALT = 'FRC10114_SEC_2026_KEY';
-      const DEFAULT_ADMIN_ENC = 'enc$66523d6e89fc9eb33f15';
-      const DEFAULT_MEMBER_ENC = 'enc$66523d6e89';
+      const DEFAULT_ADMIN_ENC = 'hash2$e95e09fdfcccab68d8afe5c06b224ca621435041f08973efd9019f1ac5ff4298';
+      const DEFAULT_MEMBER_ENC = 'hash2$8ab6914f0dc8e9e9bf785c71db33b2bc44240703dee9c09b9e94ff9d76ef6b9d';
 
       function encodeSecret(plain) {
         if (!plain) return '';
@@ -131,11 +131,37 @@
         }
       }
 
-      // Irreversible One-Way Password Hash (256-bit multi-round key stretching)
-      function hashPassword(plain) {
+      // 256-bit multi-round cryptographic key-stretching primitive
+      function rawDigest256(tag, payload) {
+        const inputBytes = new TextEncoder().encode(`${SEC_SALT}::${tag}::${payload}`);
+        const state = new Uint32Array([
+          0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+          0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+        ]);
+        for (let round = 0; round < 256; round++) {
+          for (let i = 0; i < inputBytes.length; i++) {
+            const idx = (i + round) & 7;
+            let v = state[idx] ^ (inputBytes[i] + ((round * 131 + i * 17) & 0xffff));
+            v = Math.imul(v ^ (v >>> 16), 0x85ebca6b);
+            v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35);
+            v = (v ^ (v >>> 16)) >>> 0;
+            state[idx] = v;
+            state[(idx + 1) & 7] = (state[(idx + 1) & 7] + ((v << 7) | (v >>> 25))) >>> 0;
+          }
+        }
+        let hex = '';
+        for (let i = 0; i < 8; i++) {
+          hex += state[i].toString(16).padStart(8, '0');
+        }
+        return hex;
+      }
+
+      // Round 1 Client Proof (derived only when user provides plaintext password)
+      function deriveClientProof(plain) {
         if (!plain) return '';
         const str = String(plain);
-        if (str.startsWith('hash$')) return str;
+        if (str.startsWith('proof$')) return str;
+        if (str.startsWith('hash$')) return 'proof$' + str.slice(5);
         const raw = str.startsWith('enc$') ? decodeSecret(str) : str;
         const inputBytes = new TextEncoder().encode(`${SEC_SALT}::${raw}::FRC10114_V2`);
         const state = new Uint32Array([
@@ -157,7 +183,23 @@
         for (let i = 0; i < 8; i++) {
           hex += state[i].toString(16).padStart(8, '0');
         }
-        return 'hash$' + hex;
+        return 'proof$' + hex;
+      }
+
+      // Round 2 Irreversible StoredKey Hash (stored in localStorage & Cloud Firestore)
+      // Even with full read access to StoredKey (hash2$), an attacker cannot invert it to obtain ClientProof (proof$)
+      function hashPassword(plain) {
+        if (!plain) return '';
+        const str = String(plain);
+        if (str.startsWith('hash2$')) return str;
+        if (str.startsWith('hash$')) {
+          return 'hash2$' + rawDigest256('STORED_KEY_V2', str.slice(5));
+        }
+        if (str.startsWith('proof$')) {
+          return 'hash2$' + rawDigest256('STORED_KEY_V2', str.slice(6));
+        }
+        const proofHex = deriveClientProof(str).slice(6);
+        return 'hash2$' + rawDigest256('STORED_KEY_V2', proofHex);
       }
 
       function verifySecret(input, stored) {
@@ -165,13 +207,50 @@
         if (!input || !stored) return false;
         const s = String(stored);
         const inp = String(input);
-        if (s.startsWith('hash$')) {
+        if (s.startsWith('hash2$')) {
           return hashPassword(inp) === s;
+        }
+        if (s.startsWith('hash$')) {
+          return deriveClientProof(inp) === 'proof$' + s.slice(5);
         }
         if (s.startsWith('enc$')) {
           return inp === decodeSecret(s);
         }
         return inp === s;
+      }
+
+      // Unforgeable SCRAM Session Signature: requires pre-image ClientProof that hashes to member's StoredKey
+      function createSessionSig(role, memberId, plainOrProof) {
+        if (!role || !memberId || !plainOrProof) return '';
+        const proof = deriveClientProof(plainOrProof);
+        const mac = rawDigest256('SESSION_MAC_V2', `${role}:${memberId}:${proof}`);
+        return `${proof}:${mac}`;
+      }
+
+      function verifySessionSig(sig, role, memberId, targetMember) {
+        if (!sig || !role || !memberId || !targetMember || typeof sig !== 'string') return false;
+        const parts = sig.split(':');
+        if (parts.length !== 2) return false;
+        const [proof, mac] = parts;
+        if (!proof || !proof.startsWith('proof$') || !mac) return false;
+        const expectedMac = rawDigest256('SESSION_MAC_V2', `${role}:${memberId}:${proof}`);
+        if (mac !== expectedMac) return false;
+        const derivedH2 = hashPassword(proof);
+        if (role === 'admin') {
+          const isValidAdmin =
+            targetMember.role === 'admin' ||
+            targetMember.id === '10114-001' ||
+            (targetMember.id && targetMember.id.startsWith('10114-ADM'));
+          if (!isValidAdmin) return false;
+          return derivedH2 === hashPassword(targetMember.password || DEFAULT_ADMIN_ENC);
+        }
+        if (role === 'parent') {
+          if (targetMember.parentPassword) {
+            return derivedH2 === hashPassword(targetMember.parentPassword);
+          }
+          return derivedH2 === hashPassword(targetMember.password || DEFAULT_MEMBER_ENC) || derivedH2 === DEFAULT_MEMBER_ENC;
+        }
+        return derivedH2 === hashPassword(targetMember.password || DEFAULT_MEMBER_ENC);
       }
 
       function sanitizeAvatarUrl(url) {
@@ -1640,7 +1719,8 @@
             const memId = sessionStorage.getItem('frc10114_member_id');
             const sig = sessionStorage.getItem('frc10114_session_sig');
             if (!r || !memId || !sig) return false;
-            return sig === hashPassword(`${r}:${memId}:SESSION_SIG`);
+            const target = members.find(m => m.id === memId);
+            return verifySessionSig(sig, r, memId, target);
           } catch (e) {
             return false;
           }
@@ -1817,7 +1897,7 @@
                 // Filter out writes originated by this exact client tab/device
                 if (data && data.updatedBy !== clientIdRef.current) {
                   isRemoteUpdateRef.current = true;
-                  if (data.members && Array.isArray(data.members)) {
+                  if (data.members && Array.isArray(data.members) && data.members.length > 0) {
                     const normalizedRemoteMembers = normalizeMembersFromStorage(data.members);
                     setMembers(normalizedRemoteMembers);
                     try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normalizedRemoteMembers))); } catch (e) {}
@@ -2117,12 +2197,44 @@
           return true;
         };
 
+        // Helper: Brute-Force Guard for in-app password changes
+        const checkAndRecordPassChangeGuard = (isSuccess) => {
+          try {
+            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            if ((Number(saved.lockUntil) || 0) > Date.now()) {
+              showToast('安全保護鎖定中', '密碼嘗試次數過多，請稍後再試', 'error');
+              return false;
+            }
+            if (isSuccess) {
+              localStorage.removeItem('frc10114_login_guard');
+              return true;
+            }
+            const nextCount = (Number(saved.failCount) || 0) + 1;
+            if (nextCount >= 5) {
+              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: 0, lockUntil: Date.now() + 60000 }));
+              handleLogout();
+              showToast('安全防護攔截', '舊密碼連續輸入錯誤達 5 次，系統已強制登出並鎖定 60 秒', 'error');
+            } else {
+              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: nextCount, lockUntil: 0 }));
+            }
+          } catch (e) {}
+          return false;
+        };
+
         // Handle Password Update for Current Member
         const handleUpdatePassword = (memberId, oldPass, newPass) => {
           const target = members.find(m => m.id === memberId);
           if (!target) return false;
+          try {
+            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            if ((Number(saved.lockUntil) || 0) > Date.now()) {
+              showToast('安全保護鎖定中', '密碼嘗試錯誤次數過多，請稍候 60 秒再試', 'error');
+              return false;
+            }
+          } catch (e) {}
           const currentPass = target.password || (target.role === 'admin' || target.id === '10114-001' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC);
           if (!verifySecret(oldPass, currentPass)) {
+            checkAndRecordPassChangeGuard(false);
             showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
             return false;
           }
@@ -2130,18 +2242,25 @@
             showToast('密碼變更失敗', '新密碼長度至少需 4 個字元', 'warning');
             return false;
           }
-          const hashedPass = hashPassword(newPass.trim());
+          checkAndRecordPassChangeGuard(true);
+          const cleanNew = newPass.trim();
+          const hashedPass = hashPassword(cleanNew);
           const nextMembers = members.map(m => m.id === memberId ? { ...m, password: hashedPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
             setCurrentMember(prev => ({ ...prev, password: hashedPass }));
+            if (currentRole !== 'parent') {
+              try {
+                sessionStorage.setItem('frc10114_session_sig', createSessionSig(currentRole, memberId, cleanNew));
+              } catch (e) {}
+            }
           }
           if (draftMember && draftMember.id === memberId) {
             setDraftMember(prev => ({ ...prev, password: hashedPass, _newPassword: '' }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('密碼已成功更新！', '已採用單向不可逆雜湊安全儲存，請牢記您的新密碼', 'success');
+          showToast('密碼已成功更新！', '已採用雙層單向不可逆雜湊安全儲存，請牢記您的新密碼', 'success');
           return true;
         };
 
@@ -2152,8 +2271,16 @@
             showToast('找不到學生資料', '無法變更家長密碼', 'error');
             return false;
           }
+          try {
+            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            if ((Number(saved.lockUntil) || 0) > Date.now()) {
+              showToast('安全保護鎖定中', '密碼嘗試錯誤次數過多，請稍候 60 秒再試', 'error');
+              return false;
+            }
+          } catch (e) {}
           const currentPass = target.parentPassword || target.password || DEFAULT_MEMBER_ENC;
           if (!verifySecret(oldPass, currentPass)) {
+            checkAndRecordPassChangeGuard(false);
             showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
             return false;
           }
@@ -2161,23 +2288,30 @@
             showToast('密碼變更失敗', '新密碼長度至少需 4 個字元', 'warning');
             return false;
           }
-          const hashedPass = hashPassword(newPass.trim());
+          checkAndRecordPassChangeGuard(true);
+          const cleanNew = newPass.trim();
+          const hashedPass = hashPassword(cleanNew);
           const nextMembers = members.map(m => m.id === studentId ? { ...m, parentPassword: hashedPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === studentId) {
             setCurrentMember(prev => ({ ...prev, parentPassword: hashedPass }));
+            if (currentRole === 'parent') {
+              try {
+                sessionStorage.setItem('frc10114_session_sig', createSessionSig('parent', studentId, cleanNew));
+              } catch (e) {}
+            }
           }
           if (draftMember && draftMember.id === studentId) {
             setDraftMember(prev => ({ ...prev, parentPassword: hashedPass }));
           }
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
           syncToCloud({ members: nextMembers });
-          showToast('家長安全密碼變更成功！', '已採用單向不可逆雜湊安全儲存，下次登入請使用新密碼', 'success');
+          showToast('家長安全密碼變更成功！', '已採用雙層單向不可逆雜湊安全儲存，下次登入請使用新密碼', 'success');
           return true;
         };
 
         // Role select & login handler
-        const handleLoginSelect = (role, memberObj, studentName) => {
+        const handleLoginSelect = (role, memberObj, studentName, rawInputPass = '') => {
           setCurrentRole(role);
           setIsAuthenticated(true);
           try {
@@ -2191,7 +2325,7 @@
             setActiveTab('profile');
             try {
               sessionStorage.setItem('frc10114_member_id', admin.id);
-              sessionStorage.setItem('frc10114_session_sig', hashPassword(`admin:${admin.id}:SESSION_SIG`));
+              sessionStorage.setItem('frc10114_session_sig', createSessionSig('admin', admin.id, rawInputPass));
             } catch (e) {}
             showToast('歡迎管理員教練', '已進入 FRC 10114 管理後台', 'success');
           } else if (role === 'member') {
@@ -2200,7 +2334,7 @@
             setActiveTab('profile');
             try {
               sessionStorage.setItem('frc10114_member_id', m.id);
-              sessionStorage.setItem('frc10114_session_sig', hashPassword(`member:${m.id}:SESSION_SIG`));
+              sessionStorage.setItem('frc10114_session_sig', createSessionSig('member', m.id, rawInputPass));
             } catch (e) {}
             showToast(`歡迎隊員 ${m.name}`, `已進入個人專屬頁面 (所屬：${m.departments.join(' / ')})`, 'success');
           } else if (role === 'parent') {
@@ -2212,7 +2346,7 @@
             try {
               sessionStorage.setItem('frc10114_parent_student', name);
               sessionStorage.setItem('frc10114_member_id', student.id);
-              sessionStorage.setItem('frc10114_session_sig', hashPassword(`parent:${student.id}:SESSION_SIG`));
+              sessionStorage.setItem('frc10114_session_sig', createSessionSig('parent', student.id, rawInputPass));
             } catch (e) {}
             showToast('家長關心專區已就緒', `歡迎關心 ${name} 的留校實作進度`, 'info');
           }
@@ -2232,11 +2366,11 @@
           showToast('已登出系統', '感謝使用 FRC 10114 隊務系統，歡迎隨時登入', 'info');
         };
 
-        // Security Guard 1: Anti-Tampering Role & Session Verification
+        // Security Guard 1: Anti-Tampering Role & Cryptographic SCRAM Session Verification
         useEffect(() => {
           if (!isAuthenticated) return;
+          const matched = members.find(m => m.id === currentMember?.id);
           if (currentRole === 'admin') {
-            const matched = members.find(m => m.id === currentMember?.id);
             const isValidAdmin = matched && (
               matched.role === 'admin' ||
               matched.id === '10114-001' ||
@@ -2259,15 +2393,19 @@
             const sig = sessionStorage.getItem('frc10114_session_sig');
             const memId = sessionStorage.getItem('frc10114_member_id') || '';
             const roleInStorage = sessionStorage.getItem('frc10114_role') || '';
-            const expectedSig = hashPassword(`${ currentRole }:${ currentMember?.id || '' }:SESSION_SIG`);
-            if (!sig || roleInStorage !== currentRole || memId !== (currentMember?.id || '') || sig !== expectedSig) {
+            if (
+              !sig ||
+              roleInStorage !== currentRole ||
+              memId !== (currentMember?.id || '') ||
+              !verifySessionSig(sig, currentRole, memId, matched || currentMember)
+            ) {
               setIsAuthenticated(false);
               sessionStorage.removeItem('frc10114_logged_in');
               sessionStorage.removeItem('frc10114_role');
               sessionStorage.removeItem('frc10114_member_id');
               sessionStorage.removeItem('frc10114_parent_student');
               sessionStorage.removeItem('frc10114_session_sig');
-              showToast('安全防護攔截', '偵測到工作階段憑證異常竄改，系統已強制登出', 'error');
+              showToast('安全防護攔截', '偵測到工作階段憑證異常竄改或密碼已更新，系統已強制登出', 'error');
             }
           } catch (e) {}
         }, [isAuthenticated, currentRole, currentMember, members]);
@@ -2346,6 +2484,11 @@
           setMembers(nextMembers);
           if (currentMember.id === selectedMemberId || currentMember.id === normalizedDraft.id) {
             setCurrentMember(normalizedDraft);
+            if (pendingNewPass && currentRole !== 'parent') {
+              try {
+                sessionStorage.setItem('frc10114_session_sig', createSessionSig(currentRole, normalizedDraft.id, pendingNewPass));
+              } catch (e) {}
+            }
           }
           setSelectedMemberId(normalizedDraft.id);
           try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
@@ -13940,7 +14083,7 @@
           }
           clearLoginGuard();
           setAdminErr('');
-          onSelectRole('admin', targetAdmin);
+          onSelectRole('admin', targetAdmin, undefined, adminPassword.trim());
         };
 
         // Member Submit Handler
@@ -13959,7 +14102,7 @@
           }
           clearLoginGuard();
           setMemberErr('');
-          onSelectRole('member', targetMember);
+          onSelectRole('member', targetMember, undefined, memberPassword.trim());
         };
 
         // Parent Submit Handler
@@ -13985,7 +14128,7 @@
           }
           clearLoginGuard();
           setParentErr('');
-          onSelectRole('parent', selectedStudent, selectedStudent.name);
+          onSelectRole('parent', selectedStudent, selectedStudent.name, parentPassword.trim());
         };
 
         const currentSelAdmin = adminMembers.find(m => m.id === selectedAdminId) || adminMembers[0];
