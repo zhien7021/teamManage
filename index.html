@@ -412,7 +412,15 @@
       function sanitizeAvatarUrl(url) {
         if (!url || typeof url !== 'string') return undefined;
         const trimmed = url.trim();
-        if (trimmed.startsWith('data:image/') || trimmed.startsWith('https://')) {
+        // Strict DoS protection: limit avatar payload to max 60,000 characters (~44KB binary)
+        // Prevents bloated base64 strings from exhausting Firestore 1MB document limit or dragging network performance
+        if (trimmed.length > 60000) return undefined;
+        // Strictly allow safe raster image base64 formats (JPEG, PNG, WebP). Reject SVG to prevent XSS payloads.
+        if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(trimmed)) {
+          return trimmed;
+        }
+        // Strictly allow HTTPS image URLs ending with standard raster extensions (max 256 chars)
+        if (trimmed.startsWith('https://') && trimmed.length <= 256 && /\.(jpe?g|png|webp)($|\?)/i.test(trimmed)) {
           return trimmed;
         }
         return undefined;
@@ -4368,11 +4376,21 @@
                                   onChange={(e) => {
                                     const file = e.target.files && e.target.files[0];
                                     if (!file) return;
+                                    if (!file.type || !file.type.startsWith('image/') || file.type.includes('svg')) {
+                                      alert('請選擇有效的圖片檔案（支援 JPG、PNG、WebP）');
+                                      e.target.value = '';
+                                      return;
+                                    }
+                                    if (file.size > 8 * 1024 * 1024) {
+                                      alert('所選圖片檔案過大（超過 8MB），請先裁切或選擇較小的相片！');
+                                      e.target.value = '';
+                                      return;
+                                    }
                                     const reader = new FileReader();
                                     reader.onload = (event) => {
                                       const img = new Image();
                                       img.onload = () => {
-                                        const maxDim = 320;
+                                        const maxDim = 256;
                                         let width = img.width;
                                         let height = img.height;
                                         if (width > height) {
@@ -4391,8 +4409,13 @@
                                         canvas.height = height;
                                         const ctx = canvas.getContext('2d');
                                         ctx.drawImage(img, 0, 0, width, height);
-                                        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                                        setDraftMember(prev => ({ ...prev, avatar: dataUrl }));
+                                        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                                        const safe = sanitizeAvatarUrl(dataUrl);
+                                        if (safe) {
+                                          setDraftMember(prev => ({ ...prev, avatar: safe }));
+                                        } else {
+                                          alert('頭貼壓縮後仍超出安全上限，請更換尺寸較小的照片');
+                                        }
                                       };
                                       img.src = event.target.result;
                                     };
@@ -10819,15 +10842,21 @@
         const handleImageFileChange = (e) => {
           const file = e.target.files && e.target.files[0];
           if (!file) return;
-          if (!file.type.startsWith('image/')) {
-            alert('請選擇圖片檔案（支援 JPG、PNG、WebP、GIF 等）');
+          if (!file.type || !file.type.startsWith('image/') || file.type.includes('svg')) {
+            alert('請選擇有效的圖片檔案（支援 JPG、PNG、WebP）');
+            e.target.value = '';
+            return;
+          }
+          if (file.size > 8 * 1024 * 1024) {
+            alert('所選圖片檔案過大（超過 8MB），請先裁切或選擇較小的相片！');
+            e.target.value = '';
             return;
           }
           const reader = new FileReader();
           reader.onload = (event) => {
             const img = new Image();
             img.onload = () => {
-              const maxDim = 320;
+              const maxDim = 256;
               let width = img.width;
               let height = img.height;
               if (width > height) {
@@ -10846,8 +10875,13 @@
               canvas.height = height;
               const ctx = canvas.getContext('2d');
               ctx.drawImage(img, 0, 0, width, height);
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-              if (onUpdateAvatar) onUpdateAvatar(member.id, dataUrl);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+              const safe = sanitizeAvatarUrl(dataUrl);
+              if (safe) {
+                if (onUpdateAvatar) onUpdateAvatar(member.id, safe);
+              } else {
+                alert('頭貼壓縮後仍超出安全上限，請更換尺寸較小的照片');
+              }
             };
             img.src = event.target.result;
           };
