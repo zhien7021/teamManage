@@ -2296,6 +2296,9 @@
             }
           });
         }
+        if (key === 'members') {
+          return encodeMembersForStorage(merged);
+        }
         return merged;
       }
 
@@ -4166,18 +4169,12 @@
                             name: '新進隊員',
                             className: '',
                             seatNumber: '',
-                            email: `${newId}@frc10114.org`,
                             departments: ['機電整合組'],
                             motto: '熱愛工程，追求突破！',
                             role: 'member',
-                            password: DEFAULT_MEMBER_ENC,
+                            hasCustomPass: false,
+                            hasCustomParentPass: false,
                             englishName: '',
-                            passportName: '',
-                            birthDate: '',
-                            nationalId: '',
-                            address: '',
-                            guardianName: '',
-                            guardianPhone: '',
                           };
                           const next = [...members, newM];
                           setMembers(next);
@@ -4658,9 +4655,6 @@
                                   setDraftMember({
                                     ...draftMember,
                                     _newPassword: val,
-                                    password: val.trim()
-                                      ? hashPassword(val.trim())
-                                      : (originalMember?.password || draftMember.password),
                                   });
                                 }}
                                 placeholder="目前已設定加密雜湊密碼（若需重設請輸入新密碼，留空則保持原密碼）"
