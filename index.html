@@ -81,6 +81,167 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #ea580c;
       }
+
+      /* 辦公工具組：A4 文件模擬與預覽字型 (標楷體) */
+      .preview-font {
+        font-family: "BiauKai", "DFKai-SB", "標楷體", serif;
+      }
+      .a4-container {
+        width: 210mm;
+        min-height: 297mm;
+        background: white;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        margin: 0 auto;
+        padding: 12mm;
+        box-sizing: border-box;
+        display: block;
+      }
+      .doc-wrapper {
+        border: 4px double black;
+        width: 100%;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      .main-table {
+        width: 100%;
+        border-collapse: collapse;
+        border-style: hidden;
+        table-layout: fixed;
+        margin: 0;
+      }
+      .main-table th, .main-table td {
+        border: 1px solid black;
+        padding: 0;
+        text-align: center;
+        font-size: 15pt;
+        vertical-align: middle;
+        overflow: hidden;
+      }
+      .center-divider {
+        border-right: 3px solid black !important;
+      }
+      .no-border-block {
+        border-left: none !important;
+        border-right: none !important;
+        border-top: none !important;
+        text-align: left !important;
+        padding: 0 !important;
+        height: auto !important;
+      }
+      .signin-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        margin: 0;
+      }
+      .signin-table th, .signin-table td {
+        border: 1px solid black;
+        padding: 2px 5px;
+        vertical-align: middle;
+        box-sizing: border-box;
+      }
+      .signin-table th {
+        height: 38px;
+      }
+      .signin-table td {
+        height: 48px;
+        line-height: 1.25;
+        overflow: hidden;
+      }
+      .signin-page {
+        width: 210mm;
+        min-height: 297mm;
+        background: white;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        margin: 0 auto;
+        padding: 12mm;
+        box-sizing: border-box;
+        display: block;
+      }
+
+      /* 列印樣式：隱藏非預覽區域，完美輸出 A4 */
+      @media print {
+        html, body {
+          width: 100% !important;
+          height: auto !important;
+          min-height: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: white !important;
+          overflow: visible !important;
+        }
+        .no-print {
+          display: none !important;
+        }
+        header, nav, footer, #root > div > header, #root > div > div.bg-amber-500, #root > div > div.border-t {
+          display: none !important;
+        }
+        body * {
+          visibility: hidden;
+        }
+        #print-area, #print-area *,
+        #print-signin-area, #print-signin-area * {
+          visibility: visible;
+        }
+        #print-area {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100% !important;
+          min-height: 0 !important;
+          height: auto !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          box-shadow: none !important;
+          page-break-after: avoid !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+        }
+        #print-signin-area {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100% !important;
+          min-height: 0 !important;
+          height: auto !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          box-shadow: none !important;
+        }
+        .signin-page {
+          width: 100% !important;
+          min-height: 0 !important;
+          height: auto !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          box-shadow: none !important;
+          page-break-after: always !important;
+          break-after: page !important;
+          box-sizing: border-box !important;
+        }
+        .signin-page:last-child {
+          page-break-after: auto !important;
+          break-after: auto !important;
+        }
+        .doc-wrapper, .signin-wrapper {
+          page-break-after: avoid !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+        }
+        .main-table, .signin-table {
+          page-break-after: avoid !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+        }
+        tr {
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+        }
+        @page {
+          size: A4 portrait;
+          margin: 5mm;
+        }
+      }
     </style>
   </head>
   <body>
@@ -4071,6 +4232,7 @@
                     { id: 'tasks', label: '任務審核', icon: 'checkSquare' },
                     { id: 'equipment', label: '機具設備排程與清單', icon: 'wrench' },
                     { id: 'attendance', label: '到校/請假週表', icon: 'clock' },
+                    { id: 'office', label: '辦公工具組', icon: 'fileSpreadsheet' },
                   ].map(tab => (
                     <button
                       key={tab.id}
@@ -4863,6 +5025,14 @@
                   onUpdatePassword={handleUpdatePassword}
                   onOpenAddAdmin={() => setIsAddAdminModalOpen(true)}
                   onOpenFirebaseConfig={() => setIsFirebaseModalOpen(true)}
+                />
+              )}
+
+              {/* ADMIN VIEW 7: 辦公工具組 (公假單產生器 & 活動簽到表) */}
+              {currentRole === 'admin' && activeTab === 'office' && (
+                <OfficeToolsTab
+                  members={members}
+                  showToast={showToast}
                 />
               )}
 
@@ -13693,6 +13863,1625 @@
           </div>
         );
       }
+
+
+      // --- 10C. OFFICE TOOLS TAB (ADMIN VIEW: 公假產生器 & 活動簽到表) ---
+      function MemberImportModal({ isOpen, onClose, target, members, onImport }) {
+        const [search, setSearch] = useState('');
+        const [activeGroup, setActiveGroup] = useState('all');
+        const [selectedKeys, setSelectedKeys] = useState([]);
+
+        // Derive department groups directly from team members
+        const groups = useMemo(() => {
+          if (!Array.isArray(members)) return [];
+          const map = {};
+          const standardDepts = ['機構設計組', '機電整合組', '程式控制組', '行銷管理組'];
+          standardDepts.forEach(d => { map[d] = []; });
+
+          members.forEach(m => {
+            if (!m || m.role === 'admin' || m.id === '10114-001') return;
+            const depts = (m.departments && m.departments.length > 0) ? m.departments : ['未分組'];
+            depts.forEach(d => {
+              if (!map[d]) map[d] = [];
+              map[d].push({
+                id: m.id,
+                name: m.name,
+                classId: m.className || '',
+                seatId: m.seatNumber || '',
+                department: d
+              });
+            });
+          });
+
+          // Sort members inside each group by class and seat
+          Object.keys(map).forEach(d => {
+            map[d].sort((a, b) => {
+              const ca = parseInt(a.classId) || 9999;
+              const cb = parseInt(b.classId) || 9999;
+              if (ca !== cb) return ca - cb;
+              const sa = parseInt(a.seatId) || 9999;
+              const sb = parseInt(b.seatId) || 9999;
+              return sa - sb;
+            });
+          });
+
+          return Object.keys(map)
+            .filter(d => map[d].length > 0)
+            .map(d => ({ name: d, members: map[d] }));
+        }, [members]);
+
+        const totalCount = useMemo(() => {
+          const idSet = new Set();
+          groups.forEach(g => g.members.forEach(m => idSet.add(m.id || m.name)));
+          return idSet.size;
+        }, [groups]);
+
+        const getMemberKey = (m) => `${m.classId}-${m.seatId}-${m.name}`;
+
+        const displayGroups = useMemo(() => {
+          const query = search.trim().toLowerCase();
+          let filtered = groups;
+          if (activeGroup !== 'all') {
+            filtered = groups.filter(g => g.name === activeGroup);
+          }
+          if (!query) return filtered;
+          return filtered.map(g => {
+            const mems = g.members.filter(m =>
+              (m.name && m.name.toLowerCase().includes(query)) ||
+              (m.classId && m.classId.toLowerCase().includes(query)) ||
+              (m.seatId && m.seatId.toLowerCase().includes(query))
+            );
+            return { name: g.name, members: mems };
+          }).filter(g => g.members.length > 0);
+        }, [groups, activeGroup, search]);
+
+        if (!isOpen) return null;
+
+        const isMemberSelected = (m) => selectedKeys.includes(getMemberKey(m));
+
+        const toggleMember = (m) => {
+          const k = getMemberKey(m);
+          setSelectedKeys(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]);
+        };
+
+        const isGroupFullySelected = (grp) => {
+          if (!grp.members || grp.members.length === 0) return false;
+          return grp.members.every(m => isMemberSelected(m));
+        };
+
+        const toggleGroup = (grp) => {
+          if (isGroupFullySelected(grp)) {
+            const keysToRemove = new Set(grp.members.map(getMemberKey));
+            setSelectedKeys(prev => prev.filter(k => !keysToRemove.has(k)));
+          } else {
+            const keysToAdd = grp.members.map(getMemberKey);
+            setSelectedKeys(prev => Array.from(new Set([...prev, ...keysToAdd])));
+          }
+        };
+
+        const selectAllFiltered = () => {
+          const keys = [];
+          displayGroups.forEach(g => g.members.forEach(m => keys.push(getMemberKey(m))));
+          setSelectedKeys(prev => Array.from(new Set([...prev, ...keys])));
+        };
+
+        const handleConfirm = () => {
+          const keySet = new Set(selectedKeys);
+          const chosen = [];
+          const seen = new Set();
+          groups.forEach(g => {
+            g.members.forEach(m => {
+              const k = getMemberKey(m);
+              if (keySet.has(k) && !seen.has(k)) {
+                chosen.push(m);
+                seen.add(k);
+              }
+            });
+          });
+          onImport(chosen);
+          onClose();
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs no-print" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col border border-zinc-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="px-5 py-3.5 border-b border-zinc-200 flex items-center justify-between bg-zinc-50/70">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center font-bold text-base shadow-xs">
+                    <Icon name="users" className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm sm:text-base font-bold text-zinc-900">FRC 隊員分組名單導入</h3>
+                      <span className="text-[11px] bg-orange-100 text-orange-800 font-semibold px-2 py-0.5 rounded-full">共 {totalCount} 位隊員</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400">
+                      從系統現有名單直接勾選隊員，將自動導入至 {target === 'leave' ? '公假單名冊' : '活動簽到表'}
+                    </p>
+                  </div>
+                </div>
+                <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200/60 p-1.5 rounded-lg transition" title="關閉">
+                  <Icon name="x" className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Search & Actions */}
+              <div className="p-4 border-b border-zinc-200 bg-white space-y-2.5">
+                <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between">
+                  <div className="relative w-full sm:w-72">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-400">
+                      <Icon name="search" className="w-3.5 h-3.5" />
+                    </span>
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="搜尋姓名、班級或座號..."
+                      className="w-full pl-8 pr-3 py-1.5 text-xs border border-zinc-300 rounded-lg focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition bg-zinc-50"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end text-xs">
+                    <button type="button" onClick={selectAllFiltered} className="px-2.5 py-1.5 rounded-md border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 font-medium transition cursor-pointer">
+                      全選目前顯示
+                    </button>
+                    <button type="button" onClick={() => setSelectedKeys([])} className="px-2.5 py-1.5 rounded-md border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-red-500 font-medium transition cursor-pointer">
+                      清空勾選
+                    </button>
+                  </div>
+                </div>
+
+                {/* Group Filter Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs scrollbar-none">
+                  <button
+                    type="button"
+                    onClick={() => setActiveGroup('all')}
+                    className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap cursor-pointer ${activeGroup === 'all' ? 'bg-zinc-900 text-white font-bold' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600'}`}
+                  >
+                    全部組別 ({totalCount})
+                  </button>
+                  {groups.map(grp => (
+                    <button
+                      key={grp.name}
+                      type="button"
+                      onClick={() => setActiveGroup(grp.name)}
+                      className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap flex items-center gap-1 cursor-pointer ${activeGroup === grp.name ? 'bg-zinc-900 text-white font-bold' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600'}`}
+                    >
+                      <span>{grp.name}</span>
+                      <span className="opacity-70 text-[10px]">({grp.members.length})</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Members Cards List */}
+              <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-5 bg-zinc-50/50">
+                {displayGroups.map(grp => (
+                  <div key={grp.name} className="space-y-2.5">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-zinc-200">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                        <h4 className="font-bold text-xs sm:text-sm text-zinc-800">{grp.name}</h4>
+                        <span className="text-[11px] text-zinc-400">({grp.members.length} 人)</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(grp)}
+                        className="text-xs font-semibold text-orange-600 hover:text-orange-700 transition cursor-pointer"
+                      >
+                        {isGroupFullySelected(grp) ? '取消全組選取' : '✓ 全選此組'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                      {grp.members.map(m => {
+                        const sel = isMemberSelected(m);
+                        return (
+                          <div
+                            key={getMemberKey(m)}
+                            onClick={() => toggleMember(m)}
+                            className={`p-2 sm:p-2.5 rounded-xl border transition cursor-pointer select-none flex items-center gap-2 ${sel ? 'border-orange-500 bg-orange-50/70 ring-1 ring-orange-500 shadow-xs' : 'border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50/80'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={sel}
+                              onChange={() => {}}
+                              className="w-4 h-4 rounded text-orange-500 accent-orange-500 pointer-events-none"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between">
+                                <span className={`font-bold text-xs truncate ${sel ? 'text-zinc-900 font-black' : 'text-zinc-800'}`}>{m.name}</span>
+                              </div>
+                              <div className="text-[11px] text-zinc-400 flex items-center gap-1 mt-0.5">
+                                <span className="font-medium text-zinc-500">{m.classId || '未設班級'}</span>
+                                {m.seatId && <span>· {m.seatId}號</span>}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                {displayGroups.length === 0 && (
+                  <div className="text-center py-12 text-zinc-400 text-xs">
+                    查無符合條件之隊員
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3.5 border-t border-zinc-200 bg-white flex items-center justify-between">
+                <div className="text-xs text-zinc-500 font-medium">
+                  已選取 <span className="font-bold text-orange-600 text-sm">{selectedKeys.length}</span> 位隊員
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-semibold text-zinc-600 hover:bg-zinc-100 transition cursor-pointer">
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirm}
+                    disabled={selectedKeys.length === 0}
+                    className="px-5 py-2 rounded-lg text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-xs cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>確認導入名單</span>
+                    {selectedKeys.length > 0 && <span className="bg-orange-700/50 px-1.5 py-0.5 rounded text-[10px]">({selectedKeys.length})</span>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+
+      // --- 10C. OFFICE TOOLS TAB (ADMIN VIEW: 公假產生器 & 活動簽到表) ---
+      function OfficeToolsTab({ members, showToast }) {
+        // Active sub-tool: 'leave' or 'signin'
+        const [activeTool, setActiveTool] = useState('leave');
+        const [showImportModal, setShowImportModal] = useState(false);
+        const [modalTarget, setModalTarget] = useState('leave');
+
+        // Helper: get today YYYY-MM-DD
+        const getTodayStr = () => {
+          const today = new Date();
+          const year = today.getFullYear();
+          const month = String(today.getMonth() + 1).padStart(2, '0');
+          const day = String(today.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        };
+
+        // --- Custom Options Persistence (with add/delete) ---
+        const [reasonOptions, setReasonOptions] = useState(() => {
+          try {
+            const s = localStorage.getItem('frc10114_office_reasons');
+            if (s) return JSON.parse(s);
+          } catch (e) {}
+          return [
+            '參與FRC競賽培訓活動',
+            '擔任STEAM營隊助教',
+            '擔任活動工作人員',
+            '參與FRC機器人競賽',
+            '參與FTC機器人競賽'
+          ];
+        });
+        useEffect(() => {
+          try { localStorage.setItem('frc10114_office_reasons', JSON.stringify(reasonOptions)); } catch (e) {}
+        }, [reasonOptions]);
+
+        const [locationOptions, setLocationOptions] = useState(() => {
+          try {
+            const s = localStorage.getItem('frc10114_office_locations');
+            if (s) return JSON.parse(s);
+          } catch (e) {}
+          return [
+            '錦和高中 綜合大樓4F 科技中心',
+            '錦和高中 創客教室',
+            '錦和高中 FRC機器人基地',
+            '錦和高中 綜合大樓',
+            '錦和高中 圖書館大樓',
+            '錦和高中 演藝廳',
+            '錦和高中 電腦教室'
+          ];
+        });
+        useEffect(() => {
+          try { localStorage.setItem('frc10114_office_locations', JSON.stringify(locationOptions)); } catch (e) {}
+        }, [locationOptions]);
+
+        const [timeOptions, setTimeOptions] = useState(() => {
+          try {
+            const s = localStorage.getItem('frc10114_office_times');
+            if (s) return JSON.parse(s);
+          } catch (e) {}
+          return [
+            '09:00-16:00',
+            '09:00-12:00',
+            '13:30-16:30',
+            '12:10-13:00',
+            '17:00-19:00'
+          ];
+        });
+        useEffect(() => {
+          try { localStorage.setItem('frc10114_office_times', JSON.stringify(timeOptions)); } catch (e) {}
+        }, [timeOptions]);
+
+        const [unitOptions, setUnitOptions] = useState(() => {
+          try {
+            const s = localStorage.getItem('frc10114_office_units');
+            if (s) return JSON.parse(s);
+          } catch (e) {}
+          return [
+            '115學年度錦和科技中心',
+            '新北市立錦和高級中學',
+            'FRC 10114 機器人團隊'
+          ];
+        });
+        useEffect(() => {
+          try { localStorage.setItem('frc10114_office_units', JSON.stringify(unitOptions)); } catch (e) {}
+        }, [unitOptions]);
+
+        // Helpers to add/remove options
+        const handleAddOption = (type, value) => {
+          const val = value.trim();
+          if (!val) return;
+          if (type === 'reason' && !reasonOptions.includes(val)) setReasonOptions(prev => [...prev, val]);
+          if (type === 'location' && !locationOptions.includes(val)) setLocationOptions(prev => [...prev, val]);
+          if (type === 'time' && !timeOptions.includes(val)) setTimeOptions(prev => [...prev, val]);
+          if (type === 'unit' && !unitOptions.includes(val)) setUnitOptions(prev => [...prev, val]);
+          if (showToast) showToast('已儲存選項', `已將「${val}」加入選單供日後使用`, 'success');
+        };
+
+        const handleDeleteOption = (type, value, e) => {
+          if (e) e.stopPropagation();
+          if (type === 'reason') setReasonOptions(prev => prev.filter(x => x !== value));
+          if (type === 'location') setLocationOptions(prev => prev.filter(x => x !== value));
+          if (type === 'time') setTimeOptions(prev => prev.filter(x => x !== value));
+          if (type === 'unit') setUnitOptions(prev => prev.filter(x => x !== value));
+          if (showToast) showToast('已刪除選項', `已自選單中移除「${value}」`, 'info');
+        };
+
+        // ==================== 1. 公假單資料 ====================
+        const [selectedReason, setSelectedReason] = useState(() => reasonOptions[0] || '參與FRC競賽培訓活動');
+        const [customReason, setCustomReason] = useState('');
+        const [leaveForm, setLeaveForm] = useState({
+          reason: reasonOptions[0] || '參與FRC競賽培訓活動',
+          startDate: getTodayStr(),
+          endDate: getTodayStr(),
+          selectedPeriods: ['早自習', '第1節', '第2節', '第3節', '第4節', '午休', '第5節', '第6節', '第7節', '第8節']
+        });
+
+        const periods = ['早自習', '第1節', '第2節', '第3節', '第4節', '午休', '第5節', '第6節', '第7節', '第8節'];
+        const [colWidths, setColWidths] = useState({ classId: 8, seatId: 8, name: 14, teacher: 20 });
+        const [rowHeight, setRowHeight] = useState(40);
+        const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+        const [students, setStudents] = useState([]);
+        const [importText, setImportText] = useState('');
+
+        const onReasonChange = (val) => {
+          setSelectedReason(val);
+          if (val === 'custom') {
+            setLeaveForm(prev => ({ ...prev, reason: customReason || prev.reason }));
+          } else {
+            setLeaveForm(prev => ({ ...prev, reason: val }));
+          }
+        };
+
+        const onCustomReasonInput = (val) => {
+          setCustomReason(val);
+          setLeaveForm(prev => ({ ...prev, reason: val }));
+        };
+
+        const resetColWidths = () => {
+          setColWidths({ classId: 8, seatId: 8, name: 14, teacher: 20 });
+          setRowHeight(40);
+        };
+
+        const selectAllPeriods = () => setLeaveForm(prev => ({ ...prev, selectedPeriods: [...periods] }));
+        const clearPeriods = () => setLeaveForm(prev => ({ ...prev, selectedPeriods: [] }));
+
+        const totalWidth = useMemo(() => {
+          const sum = colWidths.classId + colWidths.seatId + colWidths.name + colWidths.teacher;
+          return Math.round(sum * 10) / 10;
+        }, [colWidths]);
+
+        const parseImportText = () => {
+          if (!importText.trim()) return;
+          const lines = importText.split('\n');
+          const next = [...students];
+          lines.forEach(line => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
+            const match = trimmed.match(/^(\d{3})\s*(\d{1,2})\s*(.+)$/);
+            if (match) {
+              next.push({
+                classId: match[1],
+                seatId: parseInt(match[2], 10).toString(),
+                name: match[3].trim(),
+                teacher: ''
+              });
+            } else {
+              next.push({ classId: '', seatId: '', name: trimmed, teacher: '' });
+            }
+          });
+
+          next.sort((a, b) => {
+            const classA = parseInt(a.classId) || 9999;
+            const classB = parseInt(b.classId) || 9999;
+            if (classA !== classB) return classA - classB;
+            const seatA = parseInt(a.seatId) || 9999;
+            const seatB = parseInt(b.seatId) || 9999;
+            return seatA - seatB;
+          });
+          setStudents(next);
+          setImportText('');
+          if (showToast) showToast('名單已加入', `已解析加入隊員名單`, 'success');
+        };
+
+        const addStudent = () => setStudents(prev => [...prev, { classId: '', seatId: '', name: '', teacher: '' }]);
+        const removeStudent = (idx) => setStudents(prev => prev.filter((_, i) => i !== idx));
+
+        const toTaiwanYear = (dateStr) => {
+          if (!dateStr) return { year: '', month: '', day: '' };
+          const parts = dateStr.split('-');
+          if (parts.length !== 3) return { year: '', month: '', day: '' };
+          return {
+            year: (parseInt(parts[0], 10) - 1911).toString(),
+            month: parts[1],
+            day: parts[2]
+          };
+        };
+
+        const startYMD = useMemo(() => toTaiwanYear(leaveForm.startDate), [leaveForm.startDate]);
+        const endYMD = useMemo(() => toTaiwanYear(leaveForm.endDate), [leaveForm.endDate]);
+
+        const representativeStudent = useMemo(() => {
+          if (students.length === 0) return '　　　　';
+          const first = students[0];
+          return `${first.classId}${first.name}`;
+        }, [students]);
+
+        const chunkedStudents = useMemo(() => {
+          const result = [];
+          for (let i = 0; i < students.length; i += 2) {
+            result.push([students[i], students[i + 1] || null]);
+          }
+          return result;
+        }, [students]);
+
+        const getStudentData = (rowIndex, colIndex, field) => {
+          const row = chunkedStudents[rowIndex];
+          if (row && row[colIndex]) {
+            return row[colIndex][field] || '';
+          }
+          return '';
+        };
+
+        // ==================== 2. 活動簽到表資料 ====================
+        const [selectedLocation, setSelectedLocation] = useState(() => locationOptions[0] || '錦和高中 綜合大樓4F 科技中心');
+        const [customLocation, setCustomLocation] = useState('');
+        const [selectedTime, setSelectedTime] = useState(() => timeOptions[0] || '09:00-16:00');
+        const [customTime, setCustomTime] = useState('');
+        const [selectedUnit, setSelectedUnit] = useState(() => unitOptions[0] || '115學年度錦和科技中心');
+        const [customUnit, setCustomUnit] = useState('');
+
+        const [signInForm, setSignInForm] = useState({
+          unitName: unitOptions[0] || '115學年度錦和科技中心',
+          activityName: '【國中生科】生活科技競賽研習',
+          date: getTodayStr(),
+          timePreset: timeOptions[0] || '09:00-16:00',
+          locationPreset: locationOptions[0] || '錦和高中 綜合大樓4F 科技中心'
+        });
+
+        const [signInColWidths, setSignInColWidths] = useState({ no: 7, unit: 23, name: 21, sign: 27, remark: 22 });
+        const [signInRowHeight, setSignInRowHeight] = useState(48);
+        const [showSignInAdvanced, setShowSignInAdvanced] = useState(false);
+        const [signInStudents, setSignInStudents] = useState([]);
+        const [signInImportText, setSignInImportText] = useState('');
+
+        const resetSignInColWidths = () => {
+          setSignInColWidths({ no: 7, unit: 23, name: 21, sign: 27, remark: 22 });
+          setSignInRowHeight(48);
+        };
+
+        const totalSignInWidth = useMemo(() => {
+          const sum = signInColWidths.no + signInColWidths.unit + signInColWidths.name + signInColWidths.sign + signInColWidths.remark;
+          return Math.round(sum * 10) / 10;
+        }, [signInColWidths]);
+
+        const formattedSignInDate = useMemo(() => {
+          if (!signInForm.date) return '';
+          const parts = signInForm.date.split('-');
+          if (parts.length !== 3) return signInForm.date;
+          return `${parts[0]}年 ${parseInt(parts[1], 10)}月 ${parseInt(parts[2], 10)}日`;
+        }, [signInForm.date]);
+
+        const currentSignInTime = useMemo(() => {
+          if (selectedTime === 'custom') return customTime || '';
+          return selectedTime;
+        }, [selectedTime, customTime]);
+
+        const currentSignInLocation = useMemo(() => {
+          if (selectedLocation === 'custom') return customLocation || '';
+          return selectedLocation;
+        }, [selectedLocation, customLocation]);
+
+        const currentSignInUnit = useMemo(() => {
+          if (selectedUnit === 'custom') return customUnit || signInForm.unitName;
+          return selectedUnit;
+        }, [selectedUnit, customUnit, signInForm.unitName]);
+
+        const addSignInStudent = () => {
+          setSignInStudents(prev => [...prev, { unit: '', name: '', remark: '' }]);
+        };
+
+        const parseSignInImportText = () => {
+          if (!signInImportText.trim()) return;
+          const lines = signInImportText.split('\n');
+          const next = [...signInStudents];
+          lines.forEach(line => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
+            const match = trimmed.match(/^(\d{3})\s*(\d{1,2})?\s*(.+)$/);
+            if (match) {
+              next.push({
+                unit: match[1],
+                name: match[3].trim(),
+                remark: ''
+              });
+            } else {
+              const parts = trimmed.split(/\s+/);
+              if (parts.length >= 2) {
+                next.push({
+                  unit: parts[0],
+                  name: parts.slice(1).join(' '),
+                  remark: ''
+                });
+              } else {
+                next.push({ unit: '', name: trimmed, remark: '' });
+              }
+            }
+          });
+          setSignInStudents(next);
+          setSignInImportText('');
+          if (showToast) showToast('名單已加入', `已解析加入簽到名冊`, 'success');
+        };
+
+        const ROWS_PER_PAGE = 16;
+        const signInTotalPages = useMemo(() => {
+          const count = signInStudents.length;
+          if (count <= ROWS_PER_PAGE) return 1;
+          return Math.ceil(count / ROWS_PER_PAGE);
+        }, [signInStudents.length]);
+
+        const signInPages = useMemo(() => {
+          const pages = [];
+          const totalPages = signInTotalPages;
+          for (let p = 0; p < totalPages; p++) {
+            const startIdx = p * ROWS_PER_PAGE;
+            const pageRows = [];
+            for (let r = 0; r < ROWS_PER_PAGE; r++) {
+              const memberIdx = startIdx + r;
+              const rowNumber = memberIdx + 1;
+              const member = signInStudents[memberIdx] || null;
+              pageRows.push({
+                number: rowNumber,
+                unit: member ? member.unit : '',
+                name: member ? member.name : '',
+                remark: member ? member.remark : ''
+              });
+            }
+            pages.push({
+              pageNumber: p + 1,
+              totalPages: totalPages,
+              rows: pageRows
+            });
+          }
+          return pages;
+        }, [signInStudents, signInTotalPages]);
+
+        // ==================== 3. 隊員導入處理 ====================
+        const handleOpenImport = (target) => {
+          setModalTarget(target);
+          setShowImportModal(true);
+        };
+
+        const handleMembersImported = (selectedList) => {
+          if (!Array.isArray(selectedList) || selectedList.length === 0) return;
+          if (modalTarget === 'leave') {
+            const existingKeys = new Set(students.map(s => `${s.classId}-${s.seatId}-${s.name}`));
+            const next = [...students];
+            selectedList.forEach(m => {
+              const k = `${m.classId}-${m.seatId}-${m.name}`;
+              if (!existingKeys.has(k)) {
+                next.push({ classId: m.classId, seatId: m.seatId, name: m.name, teacher: '' });
+                existingKeys.add(k);
+              }
+            });
+            next.sort((a, b) => {
+              const classA = parseInt(a.classId) || 9999;
+              const classB = parseInt(b.classId) || 9999;
+              if (classA !== classB) return classA - classB;
+              const seatA = parseInt(a.seatId) || 9999;
+              const seatB = parseInt(b.seatId) || 9999;
+              return seatA - seatB;
+            });
+            setStudents(next);
+            if (showToast) showToast('隊員導入成功', `已將 ${selectedList.length} 位隊員導入公假單名單`, 'success');
+          } else {
+            const existingNames = new Set(signInStudents.map(s => s.name));
+            const next = [...signInStudents];
+            selectedList.forEach(m => {
+              if (!existingNames.has(m.name)) {
+                next.push({ unit: m.classId || 'FRC 10114', name: m.name, remark: '' });
+                existingNames.add(m.name);
+              }
+            });
+            setSignInStudents(next);
+            if (showToast) showToast('隊員導入成功', `已將 ${selectedList.length} 位隊員導入簽到名冊`, 'success');
+          }
+        };
+
+        // ==================== 4. 列印處理 ====================
+        const printCurrentDocument = () => {
+          const originalTitle = document.title;
+          if (activeTool === 'leave') {
+            const dateStr = leaveForm.startDate.replace(/-/g, '');
+            const reasonStr = leaveForm.reason || '未命名事由';
+            let studentStr = '';
+            if (students.length > 0) {
+              const first = students[0];
+              const name = (first.name || '').replace(/\s+/g, '');
+              if (name) studentStr = `_${first.classId}${name}等人`;
+            }
+            document.title = `公假_${dateStr}_${reasonStr}${studentStr}`;
+          } else {
+            const dateStr = (signInForm.date || '').replace(/-/g, '');
+            const actStr = (signInForm.activityName || '活動').replace(/[\s\【\】\[\]]/g, '');
+            document.title = `簽到表_${dateStr}_${actStr}`;
+          }
+          window.print();
+          setTimeout(() => { document.title = originalTitle; }, 1000);
+        };
+
+        return (
+          <div className="space-y-6">
+            {/* Top Toolbar */}
+            <div className="bg-white border border-zinc-200 rounded-xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 no-print">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-orange-600/10 text-orange-600 flex items-center justify-center font-bold text-lg border border-orange-500/20">
+                  <Icon name="fileSpreadsheet" className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-black text-zinc-900">教練辦公工具組</h2>
+                    <span className="text-[10px] bg-orange-100 text-orange-800 font-bold px-2 py-0.5 rounded-full">管理員專用</span>
+                  </div>
+                  <p className="text-xs text-zinc-500">標準校務表格產生、客製選單記錄、列印與PDF匯出</p>
+                </div>
+              </div>
+
+              {/* Sub-tool switcher & Print Button */}
+              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                <div className="bg-zinc-100 p-1 rounded-xl flex items-center gap-1 border border-zinc-200/80">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTool('leave')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${activeTool === 'leave' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-600 hover:text-zinc-900'}`}
+                  >
+                    <span>🏫 1. 公假單產生器</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTool('signin')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${activeTool === 'signin' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-600 hover:text-zinc-900'}`}
+                  >
+                    <span>📝 2. 活動簽到表</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={printCurrentDocument}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  <Icon name="download" className="w-4 h-4" />
+                  <span>列印 / 存為PDF</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Main Editor + Preview Layout */}
+            <div className="flex flex-col lg:flex-row gap-6 items-start">
+              {/* ========================================================= */}
+              {/* TOOL 1: 公假產生器                                        */}
+              {/* ========================================================= */}
+              {activeTool === 'leave' && (
+                <>
+                  {/* Left Column: Form Controls */}
+                  <div className="w-full lg:w-[480px] bg-white rounded-xl border border-zinc-200 shadow-xs p-5 space-y-4 no-print">
+                    {/* Card 1: 事由與時間 */}
+                    <div className="space-y-3.5 pb-4 border-b border-zinc-100">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                          <h3 className="font-bold text-zinc-900 text-xs tracking-wider uppercase">公假事由與時間</h3>
+                        </div>
+                      </div>
+
+                      {/* Reason dropdown + custom + manage */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="font-semibold text-xs text-zinc-700">參與活動名稱 (事由)</label>
+                          <span className="text-[10px] text-zinc-400">可選取或自訂</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={selectedReason}
+                            onChange={(e) => onReasonChange(e.target.value)}
+                            className="flex-1 border border-zinc-300 rounded-lg p-2 text-zinc-800 bg-white font-medium focus:ring-2 focus:ring-orange-500 text-xs outline-none"
+                          >
+                            {reasonOptions.map(opt => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                            <option value="custom">✏️ 其他（自行輸入）</option>
+                          </select>
+                          {selectedReason !== 'custom' && reasonOptions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                handleDeleteOption('reason', selectedReason, e);
+                                setSelectedReason(reasonOptions.find(x => x !== selectedReason) || 'custom');
+                              }}
+                              className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-zinc-200 transition cursor-pointer"
+                              title="從下拉選單中刪除目前事由選項"
+                            >
+                              <Icon name="trash" className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {selectedReason === 'custom' && (
+                          <div className="mt-2 space-y-1.5">
+                            <div className="flex gap-1.5">
+                              <input
+                                type="text"
+                                value={customReason}
+                                onChange={(e) => onCustomReasonInput(e.target.value)}
+                                placeholder="請輸入自訂活動事由..."
+                                className="flex-1 border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 focus:ring-2 focus:ring-orange-500 outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (customReason.trim()) {
+                                    handleAddOption('reason', customReason);
+                                    setSelectedReason(customReason.trim());
+                                  }
+                                }}
+                                disabled={!customReason.trim()}
+                                className="px-3 py-2 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-lg transition disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                                title="將此自訂事由儲存到下拉選單，下次可直接選擇"
+                              >
+                                ＋存入選單
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-zinc-400">點擊「＋存入選單」可將自訂事由儲存，下次開啟無須重新輸入。</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Dates */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-medium text-xs text-zinc-600 mb-1">開始日期</label>
+                          <input
+                            type="date"
+                            value={leaveForm.startDate}
+                            onChange={(e) => setLeaveForm(prev => ({ ...prev, startDate: e.target.value }))}
+                            className="w-full border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 focus:ring-2 focus:ring-orange-500 outline-none bg-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-medium text-xs text-zinc-600 mb-1">結束日期</label>
+                          <input
+                            type="date"
+                            value={leaveForm.endDate}
+                            onChange={(e) => setLeaveForm(prev => ({ ...prev, endDate: e.target.value }))}
+                            className="w-full border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 focus:ring-2 focus:ring-orange-500 outline-none bg-white font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Periods */}
+                      <div>
+                        <div className="flex justify-between items-center mb-1.5">
+                          <label className="block font-medium text-xs text-zinc-600">請假節次</label>
+                          <div className="flex gap-2 text-xs">
+                            <button type="button" onClick={selectAllPeriods} className="text-orange-600 hover:text-orange-700 font-bold cursor-pointer">全選</button>
+                            <span className="text-zinc-300">|</span>
+                            <button type="button" onClick={clearPeriods} className="text-zinc-400 hover:text-zinc-600 cursor-pointer">清空</button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-5 gap-1.5 bg-zinc-50 p-2.5 rounded-lg border border-zinc-200">
+                          {periods.map(period => (
+                            <label key={period} className="flex items-center gap-1.5 cursor-pointer hover:bg-white p-1 rounded transition select-none text-xs">
+                              <input
+                                type="checkbox"
+                                checked={leaveForm.selectedPeriods.includes(period)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setLeaveForm(prev => ({ ...prev, selectedPeriods: [...prev.selectedPeriods, period] }));
+                                  } else {
+                                    setLeaveForm(prev => ({ ...prev, selectedPeriods: prev.selectedPeriods.filter(x => x !== period) }));
+                                  }
+                                }}
+                                className="w-3.5 h-3.5 rounded text-orange-500 accent-orange-500 cursor-pointer"
+                              />
+                              <span className={leaveForm.selectedPeriods.includes(period) ? 'font-bold text-zinc-900' : 'text-zinc-600'}>{period}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 2: 學生名單管理 */}
+                    <div className="space-y-3.5 pb-4 border-b border-zinc-100">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                          <h3 className="font-bold text-zinc-900 text-xs tracking-wider uppercase">學生名單</h3>
+                          <span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-semibold">{students.length} 人</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {students.length > 0 && (
+                            <button type="button" onClick={() => setStudents([])} className="text-xs text-zinc-400 hover:text-red-500 transition mr-1 cursor-pointer">清空</button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenImport('leave')}
+                            className="text-xs bg-orange-500 hover:bg-orange-600 active:scale-95 text-white px-2.5 py-1.5 rounded-lg font-bold transition flex items-center gap-1 shadow-xs cursor-pointer"
+                          >
+                            <Icon name="users" className="w-3.5 h-3.5" />
+                            <span>隊員導入</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={addStudent}
+                            className="text-xs bg-zinc-900 hover:bg-black active:scale-95 text-white px-2.5 py-1.5 rounded-lg font-medium transition flex items-center gap-1 cursor-pointer"
+                          >
+                            <Icon name="plus" className="w-3.5 h-3.5" />
+                            <span>新增一列</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Fast paste import */}
+                      <div className="bg-orange-50/50 border border-orange-200/70 rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-bold text-zinc-800 flex items-center gap-1">
+                            ⚡ 快速貼上匯入
+                          </label>
+                          <span className="text-[11px] text-zinc-400">例如：209 35 王小明</span>
+                        </div>
+                        <textarea
+                          rows={2}
+                          value={importText}
+                          onChange={(e) => setImportText(e.target.value)}
+                          placeholder="支援直接貼上多行名單：&#10;209 35 王小明&#10;103 12 陳小華"
+                          className="w-full rounded-md border border-zinc-300 p-2 text-xs focus:ring-2 focus:ring-orange-500 outline-none transition bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={parseImportText}
+                          className="w-full bg-zinc-900 hover:bg-black active:scale-[0.99] text-white font-bold py-1.5 px-3 rounded-md text-xs transition shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          自動解析並加入名單
+                        </button>
+                      </div>
+
+                      {/* Student rows list */}
+                      <div className="space-y-1.5 max-h-[260px] overflow-y-auto pr-1">
+                        {students.length === 0 ? (
+                          <div className="text-center py-6 text-zinc-400 text-xs border border-dashed border-zinc-200 rounded-lg">
+                            尚無名單，可點擊「隊員導入」、快速貼上或「新增一列」
+                          </div>
+                        ) : (
+                          students.map((student, idx) => (
+                            <div key={idx} className="flex gap-1.5 items-center bg-zinc-50 hover:bg-zinc-100/80 p-1.5 rounded-lg border border-zinc-200 transition">
+                              <span className="text-zinc-400 font-mono text-[11px] w-5 text-center">{idx + 1}</span>
+                              <input
+                                type="text"
+                                value={student.classId}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setStudents(prev => prev.map((s, i) => i === idx ? { ...s, classId: val } : s));
+                                }}
+                                placeholder="班級"
+                                className="w-14 border border-zinc-300 rounded p-1 text-xs text-center focus:ring-2 focus:ring-orange-500 outline-none bg-white font-mono"
+                              />
+                              <input
+                                type="text"
+                                value={student.seatId}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setStudents(prev => prev.map((s, i) => i === idx ? { ...s, seatId: val } : s));
+                                }}
+                                placeholder="座號"
+                                className="w-12 border border-zinc-300 rounded p-1 text-xs text-center focus:ring-2 focus:ring-orange-500 outline-none bg-white font-mono"
+                              />
+                              <input
+                                type="text"
+                                value={student.name}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setStudents(prev => prev.map((s, i) => i === idx ? { ...s, name: val } : s));
+                                }}
+                                placeholder="姓名"
+                                className="w-20 flex-1 border border-zinc-300 rounded p-1 text-xs focus:ring-2 focus:ring-orange-500 outline-none bg-white font-bold"
+                              />
+                              <input
+                                type="text"
+                                value={student.teacher}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setStudents(prev => prev.map((s, i) => i === idx ? { ...s, teacher: val } : s));
+                                }}
+                                placeholder="導師"
+                                className="w-16 border border-zinc-300 rounded p-1 text-xs focus:ring-2 focus:ring-orange-500 outline-none bg-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeStudent(idx)}
+                                className="text-zinc-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition text-xs cursor-pointer"
+                                title="刪除"
+                              >
+                                <Icon name="x" className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Card 3: Advanced Layout Settings */}
+                    <div className="border border-zinc-200 rounded-xl overflow-hidden bg-white shadow-xs">
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                        className="w-full px-4 py-3 bg-white hover:bg-zinc-50 flex items-center justify-between text-left transition select-none cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Icon name="sliders" className="w-3.5 h-3.5 text-zinc-500" />
+                          <span className="text-zinc-700 font-semibold text-xs">進階設定（表格比例與列高）</span>
+                          <span className="text-[10px] text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">{showAdvancedSettings ? '點擊收合' : '微調版面'}</span>
+                        </div>
+                        <Icon name={showAdvancedSettings ? 'chevronRight' : 'chevronLeft'} className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${showAdvancedSettings ? 'rotate-90' : '-rotate-90'}`} />
+                      </button>
+
+                      {showAdvancedSettings && (
+                        <div className="p-4 border-t border-zinc-100 bg-zinc-50/50 space-y-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <label className="block text-xs font-bold text-zinc-700">📐 表格寬度比例設定 (%)</label>
+                              <button type="button" onClick={resetColWidths} className="text-[11px] text-orange-600 hover:text-orange-700 font-medium cursor-pointer">重設預設值</button>
+                            </div>
+                            <p className="text-[11px] text-zinc-500 mb-2">左、右半邊表格各自獨立，四個欄位總和請維持 50%，以確保版面不跑位。</p>
+                            <div className="grid grid-cols-4 gap-2">
+                              {['classId', 'seatId', 'name', 'teacher'].map((k) => (
+                                <div key={k}>
+                                  <label className="block text-[11px] font-medium text-zinc-500 mb-1 text-center">
+                                    {k === 'classId' ? '班級' : k === 'seatId' ? '座號' : k === 'name' ? '姓名' : '導師'}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={colWidths[k]}
+                                    onChange={(e) => {
+                                      const val = parseFloat(e.target.value) || 0;
+                                      setColWidths(prev => ({ ...prev, [k]: val }));
+                                    }}
+                                    className="w-full border border-zinc-300 rounded p-1 text-xs text-center focus:ring-2 focus:ring-orange-500 bg-white outline-none font-mono"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div className={`mt-2 text-right text-xs font-bold ${totalWidth === 50 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              目前單側總和：{totalWidth}% {totalWidth !== 50 && <span>⚠️ 建議調整至 50%</span>}
+                            </div>
+                          </div>
+
+                          <div className="pt-3 border-t border-zinc-200">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <label className="block text-xs font-bold text-zinc-700">↕️ 表格列高設定 (px)</label>
+                              <span className="font-bold text-zinc-800 text-xs font-mono">{rowHeight} px</span>
+                            </div>
+                            <p className="text-[11px] text-zinc-500 mb-2">若列印時超出 A4 或下方留白太多，可拖拉微調此數值。</p>
+                            <input
+                              type="range"
+                              min="25"
+                              max="50"
+                              step="1"
+                              value={rowHeight}
+                              onChange={(e) => setRowHeight(parseInt(e.target.value, 10))}
+                              className="w-full cursor-pointer accent-orange-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: A4 Live Preview (公假單) */}
+                  <div className="flex-1 w-full bg-zinc-200/90 p-4 md:p-8 rounded-2xl overflow-x-auto flex justify-center shadow-inner">
+                    <div id="print-area" className="a4-container preview-font text-black">
+                      <div className="doc-wrapper">
+                        <table className="main-table">
+                          <colgroup>
+                            <col style={{ width: colWidths.classId + '%' }} />
+                            <col style={{ width: colWidths.seatId + '%' }} />
+                            <col style={{ width: colWidths.name + '%' }} />
+                            <col style={{ width: colWidths.teacher + '%' }} />
+                            <col style={{ width: colWidths.classId + '%' }} />
+                            <col style={{ width: colWidths.seatId + '%' }} />
+                            <col style={{ width: colWidths.name + '%' }} />
+                            <col style={{ width: colWidths.teacher + '%' }} />
+                          </colgroup>
+                          <tbody>
+                            <tr>
+                              <td colSpan="8" className="no-border-block" style={{ borderBottom: '1px solid black !important' }}>
+                                <h2 className="text-[26pt] font-bold text-center tracking-[0.2em] py-4 m-0">新北市立錦和高中學生公假申請單</h2>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td colSpan="8" style={{ borderBottom: '1px solid black !important', textAlign: 'left !important', padding: '15px 10px 20px 10px !important', borderLeft: 'none', borderRight: 'none', borderTop: 'none' }}>
+                                <div style={{ fontSize: '15pt', letterSpacing: '2px', marginBottom: '12px', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                                  學生&nbsp;&nbsp;<span style={{ fontSize: '16pt' }}>{representativeStudent}</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;等因&nbsp;&nbsp;{leaveForm.reason}
+                                </div>
+                                <div style={{ fontSize: '15pt', letterSpacing: '2px', marginBottom: '16px', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                                  擬自&nbsp;&nbsp;<span style={{ fontSize: '16pt' }}>{startYMD.year}</span>&nbsp;年&nbsp;&nbsp;<span style={{ fontSize: '16pt' }}>{startYMD.month}</span>&nbsp;月&nbsp;&nbsp;<span style={{ fontSize: '16pt' }}>{startYMD.day}</span>&nbsp;日&nbsp;&nbsp;&nbsp;至&nbsp;&nbsp;&nbsp;<span style={{ fontSize: '16pt' }}>{endYMD.year}</span>&nbsp;年&nbsp;&nbsp;<span style={{ fontSize: '16pt' }}>{endYMD.month}</span>&nbsp;月&nbsp;&nbsp;<span style={{ fontSize: '16pt' }}>{endYMD.day}</span>&nbsp;日
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '18% 18% 18% 18% 28%', rowGap: '16px' }}>
+                                  {periods.map(period => (
+                                    <div key={period} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', fontSize: '15pt', whiteSpace: 'nowrap' }}>
+                                      <span style={{ fontSize: '20pt', marginRight: '8px', transform: 'translateY(-2px)' }}>
+                                        {leaveForm.selectedPeriods.includes(period) ? '■' : '☐'}
+                                      </span>
+                                      <span style={{ letterSpacing: '2px' }}>{period === '午休' ? '午　休' : period}</span>
+                                      {period === '第8節' && <span style={{ marginLeft: '12px', fontWeight: 'bold', letterSpacing: '2px' }}>請公假</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                            <tr className="font-normal text-[14pt]" style={{ height: rowHeight + 'px' }}>
+                              <td>班級</td>
+                              <td>座號</td>
+                              <td>姓名</td>
+                              <td className="center-divider">導師</td>
+                              <td>班級</td>
+                              <td>座號</td>
+                              <td>姓名</td>
+                              <td>導師</td>
+                            </tr>
+                            {Array.from({ length: 15 }, (_, n) => (
+                              <tr key={'student-row-' + n} style={{ height: rowHeight + 'px' }}>
+                                <td>{getStudentData(n, 0, 'classId')}</td>
+                                <td>{getStudentData(n, 0, 'seatId')}</td>
+                                <td className="tracking-widest">{getStudentData(n, 0, 'name')}</td>
+                                <td className="center-divider">{getStudentData(n, 0, 'teacher')}</td>
+                                <td>{getStudentData(n, 1, 'classId')}</td>
+                                <td>{getStudentData(n, 1, 'seatId')}</td>
+                                <td className="tracking-widest">{getStudentData(n, 1, 'name')}</td>
+                                <td>{getStudentData(n, 1, 'teacher')}</td>
+                              </tr>
+                            ))}
+                            <tr style={{ height: '40px' }}>
+                              <td colSpan="2" className="tracking-widest text-[15pt] whitespace-nowrap border-b-0">申請人</td>
+                              <td colSpan="2" className="center-divider tracking-widest text-[15pt] whitespace-nowrap border-b-0">生輔組長</td>
+                              <td colSpan="3" className="tracking-widest text-[15pt] whitespace-nowrap border-b-0">主任教官</td>
+                              <td className="tracking-widest text-[15pt] whitespace-nowrap border-b-0">登記日期</td>
+                            </tr>
+                            <tr style={{ height: '70px' }}>
+                              <td colSpan="2" className="border-t-0"></td>
+                              <td colSpan="2" className="center-divider border-t-0"></td>
+                              <td colSpan="3" className="border-t-0"></td>
+                              <td className="border-t-0"></td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ========================================================= */}
+              {/* TOOL 2: 活動簽到表                                        */}
+              {/* ========================================================= */}
+              {activeTool === 'signin' && (
+                <>
+                  {/* Left Column: Sign-in Controls */}
+                  <div className="w-full lg:w-[480px] bg-white rounded-xl border border-zinc-200 shadow-xs p-5 space-y-4 no-print">
+                    {/* Card 1: 活動資訊設定 */}
+                    <div className="space-y-3.5 pb-4 border-b border-zinc-100">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                        <h3 className="font-bold text-zinc-900 text-xs tracking-wider uppercase">活動資訊設定</h3>
+                      </div>
+
+                      {/* 開課單位 (下拉 + 自訂 + 記錄) */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="font-semibold text-xs text-zinc-700">最上行：開課單位</label>
+                          <span className="text-[10px] text-zinc-400">可選取或自訂</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={selectedUnit}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSelectedUnit(val);
+                              if (val !== 'custom') {
+                                setSignInForm(prev => ({ ...prev, unitName: val }));
+                              }
+                            }}
+                            className="flex-1 border border-zinc-300 rounded-lg p-2 text-zinc-800 bg-white font-medium focus:ring-2 focus:ring-orange-500 text-xs outline-none"
+                          >
+                            {unitOptions.map(u => (
+                              <option key={u} value={u}>{u}</option>
+                            ))}
+                            <option value="custom">✏️ 其他（自行輸入）</option>
+                          </select>
+                          {selectedUnit !== 'custom' && unitOptions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                handleDeleteOption('unit', selectedUnit, e);
+                                setSelectedUnit(unitOptions.find(x => x !== selectedUnit) || 'custom');
+                              }}
+                              className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-zinc-200 transition cursor-pointer"
+                              title="從下拉選單中刪除目前開課單位"
+                            >
+                              <Icon name="trash" className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {selectedUnit === 'custom' && (
+                          <div className="mt-2 space-y-1.5">
+                            <div className="flex gap-1.5">
+                              <input
+                                type="text"
+                                value={customUnit}
+                                onChange={(e) => {
+                                  setCustomUnit(e.target.value);
+                                  setSignInForm(prev => ({ ...prev, unitName: e.target.value }));
+                                }}
+                                placeholder="例如：115學年度錦和科技中心"
+                                className="flex-1 border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (customUnit.trim()) {
+                                    handleAddOption('unit', customUnit);
+                                    setSelectedUnit(customUnit.trim());
+                                  }
+                                }}
+                                disabled={!customUnit.trim()}
+                                className="px-3 py-2 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-lg transition disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                                title="將此開課單位儲存至選單"
+                              >
+                                ＋存入選單
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-zinc-400">點擊「＋存入選單」可將此單位儲存，日後直接下拉選取。</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 活動名稱 */}
+                      <div>
+                        <label className="block font-semibold text-xs text-zinc-700 mb-1">第二行：活動名稱（產生簽到表標題）</label>
+                        <input
+                          type="text"
+                          value={signInForm.activityName}
+                          onChange={(e) => setSignInForm(prev => ({ ...prev, activityName: e.target.value }))}
+                          placeholder="例如：【國中生科】生活科技競賽研習"
+                          className="w-full border border-zinc-300 rounded-lg p-2.5 text-xs text-zinc-800 font-bold focus:ring-2 focus:ring-orange-500 outline-none bg-white"
+                        />
+                        <p className="text-[11px] text-zinc-400 mt-1">標題呈現：<span className="font-bold text-zinc-700">「{signInForm.activityName}簽到表」</span></p>
+                      </div>
+
+                      {/* 第三行：時間（日期與時段下拉） */}
+                      <div className="space-y-2 pt-1 border-t border-zinc-100">
+                        <label className="block font-bold text-xs text-zinc-700">第三行：活動時間（日期與時段）</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[11px] text-zinc-500 mb-1">活動日期</label>
+                            <input
+                              type="date"
+                              value={signInForm.date}
+                              onChange={(e) => setSignInForm(prev => ({ ...prev, date: e.target.value }))}
+                              className="w-full border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 focus:ring-2 focus:ring-orange-500 outline-none bg-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-zinc-500 mb-1">時段選擇</label>
+                            <div className="flex gap-1">
+                              <select
+                                value={selectedTime}
+                                onChange={(e) => setSelectedTime(e.target.value)}
+                                className="flex-1 border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 bg-white focus:ring-2 focus:ring-orange-500 outline-none font-mono"
+                              >
+                                {timeOptions.map(t => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                                <option value="custom">✏️ 其他自訂時段</option>
+                              </select>
+                              {selectedTime !== 'custom' && timeOptions.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    handleDeleteOption('time', selectedTime, e);
+                                    setSelectedTime(timeOptions.find(x => x !== selectedTime) || 'custom');
+                                  }}
+                                  className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-zinc-200 transition cursor-pointer"
+                                  title="刪除此時段選項"
+                                >
+                                  <Icon name="trash" className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {selectedTime === 'custom' && (
+                          <div className="space-y-1.5">
+                            <div className="flex gap-1.5">
+                              <input
+                                type="text"
+                                value={customTime}
+                                onChange={(e) => setCustomTime(e.target.value)}
+                                placeholder="輸入自訂時段，例如：08:30-17:00"
+                                className="flex-1 border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 focus:ring-2 focus:ring-orange-500 outline-none bg-white font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (customTime.trim()) {
+                                    handleAddOption('time', customTime);
+                                    setSelectedTime(customTime.trim());
+                                  }
+                                }}
+                                disabled={!customTime.trim()}
+                                className="px-3 py-2 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-lg transition disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                                title="將此時段儲存到選單"
+                              >
+                                ＋存入選單
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-zinc-400">點擊「＋存入選單」可保存此時段，日後直接在下拉清單中使用。</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 第四行：地點（下拉選單 + 自訂 + 記錄） */}
+                      <div className="pt-1 border-t border-zinc-100">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="font-bold text-xs text-zinc-700">第四行：活動地點（下拉選單）</label>
+                          <span className="text-[10px] text-zinc-400">可選取或自訂</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={selectedLocation}
+                            onChange={(e) => setSelectedLocation(e.target.value)}
+                            className="flex-1 border border-zinc-300 rounded-lg p-2.5 text-xs text-zinc-800 bg-white font-medium focus:ring-2 focus:ring-orange-500 outline-none"
+                          >
+                            {locationOptions.map(loc => (
+                              <option key={loc} value={loc}>{loc}</option>
+                            ))}
+                            <option value="custom">✏️ 其他（自行輸入）</option>
+                          </select>
+                          {selectedLocation !== 'custom' && locationOptions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                handleDeleteOption('location', selectedLocation, e);
+                                setSelectedLocation(locationOptions.find(x => x !== selectedLocation) || 'custom');
+                              }}
+                              className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-zinc-200 transition cursor-pointer"
+                              title="刪除此地點選項"
+                            >
+                              <Icon name="trash" className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {selectedLocation === 'custom' && (
+                          <div className="mt-2 space-y-1.5">
+                            <div className="flex gap-1.5">
+                              <input
+                                type="text"
+                                value={customLocation}
+                                onChange={(e) => setCustomLocation(e.target.value)}
+                                placeholder="請輸入自訂地點..."
+                                className="flex-1 border border-zinc-300 rounded-lg p-2 text-xs text-zinc-800 focus:ring-2 focus:ring-orange-500 outline-none bg-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (customLocation.trim()) {
+                                    handleAddOption('location', customLocation);
+                                    setSelectedLocation(customLocation.trim());
+                                  }
+                                }}
+                                disabled={!customLocation.trim()}
+                                className="px-3 py-2 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-lg transition disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                                title="將此地點儲存至選單"
+                              >
+                                ＋存入選單
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-zinc-400">點擊「＋存入選單」可將此地點保存供下次快速選用。</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Card 2: 簽到人員名單 */}
+                    <div className="space-y-3.5 pb-4 border-b border-zinc-100">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                          <h3 className="font-bold text-zinc-900 text-xs tracking-wider uppercase">簽到人員名單</h3>
+                          <span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-semibold">{signInStudents.length} 人</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {signInStudents.length > 0 && (
+                            <button type="button" onClick={() => setSignInStudents([])} className="text-xs text-zinc-400 hover:text-red-500 transition mr-1 cursor-pointer">清空名單</button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenImport('signin')}
+                            className="text-xs bg-orange-500 hover:bg-orange-600 active:scale-95 text-white px-2.5 py-1.5 rounded-lg font-bold transition flex items-center gap-1 shadow-xs cursor-pointer"
+                          >
+                            <Icon name="users" className="w-3.5 h-3.5" />
+                            <span>隊員導入</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={addSignInStudent}
+                            className="text-xs bg-zinc-900 hover:bg-black active:scale-95 text-white px-2.5 py-1.5 rounded-lg font-medium transition flex items-center gap-1 cursor-pointer"
+                          >
+                            <Icon name="plus" className="w-3.5 h-3.5" />
+                            <span>新增一列</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-zinc-500">
+                        💡 若不填寫名單，將自動印出<strong>整頁空白簽到欄</strong>（供現場手寫）。若匯入名單，則會預先印出單位與姓名，簽名處留空。
+                      </p>
+
+                      {/* Fast paste */}
+                      <div className="bg-orange-50/50 border border-orange-200/70 rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-bold text-zinc-800 flex items-center gap-1">
+                            ⚡ 快速貼上匯入名單
+                          </label>
+                          <span className="text-[11px] text-zinc-400">例如：209 35 王小明</span>
+                        </div>
+                        <textarea
+                          rows={2}
+                          value={signInImportText}
+                          onChange={(e) => setSignInImportText(e.target.value)}
+                          placeholder="可直接貼上多行名單：&#10;209 35 王小明&#10;102 06 林竫涵"
+                          className="w-full rounded-md border border-zinc-300 p-2 text-xs focus:ring-2 focus:ring-orange-500 outline-none transition bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={parseSignInImportText}
+                          className="w-full bg-zinc-900 hover:bg-black active:scale-[0.99] text-white font-bold py-1.5 px-3 rounded-md text-xs transition shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          自動解析並加入名單
+                        </button>
+                      </div>
+
+                      {/* Rows list */}
+                      {signInStudents.length > 0 && (
+                        <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                          {signInStudents.map((student, idx) => (
+                            <div key={'signin-stu-' + idx} className="flex gap-1.5 items-center bg-zinc-50 hover:bg-zinc-100/80 p-1.5 rounded-lg border border-zinc-200 transition">
+                              <span className="text-zinc-400 font-mono text-[11px] w-5 text-center">{idx + 1}</span>
+                              <input
+                                type="text"
+                                value={student.unit}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setSignInStudents(prev => prev.map((s, i) => i === idx ? { ...s, unit: val } : s));
+                                }}
+                                placeholder="單位(班級)"
+                                className="w-24 border border-zinc-300 rounded p-1 text-xs text-center focus:ring-2 focus:ring-orange-500 outline-none bg-white font-mono"
+                              />
+                              <input
+                                type="text"
+                                value={student.name}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setSignInStudents(prev => prev.map((s, i) => i === idx ? { ...s, name: val } : s));
+                                }}
+                                placeholder="姓名"
+                                className="flex-1 border border-zinc-300 rounded p-1 text-xs focus:ring-2 focus:ring-orange-500 outline-none bg-white font-bold"
+                              />
+                              <input
+                                type="text"
+                                value={student.remark}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setSignInStudents(prev => prev.map((s, i) => i === idx ? { ...s, remark: val } : s));
+                                }}
+                                placeholder="備註(選填)"
+                                className="w-20 border border-zinc-300 rounded p-1 text-xs focus:ring-2 focus:ring-orange-500 outline-none bg-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setSignInStudents(prev => prev.filter((_, i) => i !== idx))}
+                                className="text-zinc-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition text-xs cursor-pointer"
+                                title="刪除"
+                              >
+                                <Icon name="x" className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card 3: Advanced Layout Settings for Sign-in */}
+                    <div className="border border-zinc-200 rounded-xl overflow-hidden bg-white shadow-xs">
+                      <button
+                        type="button"
+                        onClick={() => setShowSignInAdvanced(!showSignInAdvanced)}
+                        className="w-full px-4 py-3 bg-white hover:bg-zinc-50 flex items-center justify-between text-left transition select-none cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Icon name="sliders" className="w-3.5 h-3.5 text-zinc-500" />
+                          <span className="text-zinc-700 font-semibold text-xs">進階設定（調整簽到表欄寬與列高）</span>
+                          <span className="text-[10px] text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">{showSignInAdvanced ? '點擊收合' : '微調版面'}</span>
+                        </div>
+                        <Icon name={showSignInAdvanced ? 'chevronRight' : 'chevronLeft'} className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${showSignInAdvanced ? 'rotate-90' : '-rotate-90'}`} />
+                      </button>
+
+                      {showSignInAdvanced && (
+                        <div className="p-4 border-t border-zinc-100 bg-zinc-50/50 space-y-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <label className="block text-xs font-bold text-zinc-700">📐 表格欄寬比例設定 (%)</label>
+                              <button type="button" onClick={resetSignInColWidths} className="text-[11px] text-orange-600 hover:text-orange-700 font-medium cursor-pointer">重設預設值</button>
+                            </div>
+                            <div className="grid grid-cols-5 gap-1.5">
+                              {['no', 'unit', 'name', 'sign', 'remark'].map(k => (
+                                <div key={k}>
+                                  <label className="block text-[10px] font-medium text-zinc-500 mb-1 text-center">
+                                    {k === 'no' ? '編號' : k === 'unit' ? '單位' : k === 'name' ? '姓名' : k === 'sign' ? '簽到' : '備註'}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={signInColWidths[k]}
+                                    onChange={(e) => {
+                                      const val = parseFloat(e.target.value) || 0;
+                                      setSignInColWidths(prev => ({ ...prev, [k]: val }));
+                                    }}
+                                    className="w-full border border-zinc-300 rounded p-1 text-xs text-center focus:ring-2 focus:ring-orange-500 bg-white outline-none font-mono"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div className={`mt-2 text-right text-xs font-bold ${totalSignInWidth === 100 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              總欄寬：{totalSignInWidth}% {totalSignInWidth !== 100 && <span>⚠️ 建議五欄總和為 100%</span>}
+                            </div>
+                          </div>
+
+                          <div className="pt-3 border-t border-zinc-200">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <label className="block text-xs font-bold text-zinc-700">↕️ 簽到列高設定 (px)</label>
+                              <span className="font-bold text-zinc-800 text-xs font-mono">{signInRowHeight} px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="36"
+                              max="60"
+                              step="1"
+                              value={signInRowHeight}
+                              onChange={(e) => setSignInRowHeight(parseInt(e.target.value, 10))}
+                              className="w-full cursor-pointer accent-orange-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: A4 Live Preview (活動簽到表，支援跨頁) */}
+                  <div className="flex-1 w-full bg-zinc-200/90 p-4 md:p-8 rounded-2xl overflow-x-auto flex flex-col items-center shadow-inner">
+                    <div id="print-signin-area" className="preview-font text-black w-full max-w-[210mm] space-y-6 print:space-y-0">
+                      {signInPages.map(page => (
+                        <div key={'signin-page-' + page.pageNumber} className="a4-container signin-page">
+                          <div className="signin-wrapper w-full">
+                            {/* Header */}
+                            <div className="text-center mb-5 relative">
+                              {page.totalPages > 1 && (
+                                <div className="absolute right-0 top-0.5 text-[9.5pt] font-mono text-zinc-500 font-medium whitespace-nowrap tracking-wider select-none">
+                                  {String(page.pageNumber).padStart(2, '0')}/{String(page.totalPages).padStart(2, '0')}
+                                </div>
+                              )}
+                              <h1 className="text-[20pt] font-bold tracking-[0.05em] text-black m-0 leading-snug">
+                                {currentSignInUnit}
+                              </h1>
+                              <h2 className="text-[22pt] font-bold tracking-[0.1em] text-black m-0 mt-1 mb-4 leading-snug">
+                                {signInForm.activityName}簽到表
+                              </h2>
+                              <div className="text-left text-[14pt] leading-relaxed pt-1">
+                                <div>時間：{formattedSignInDate} {currentSignInTime}</div>
+                                <div>地點：{currentSignInLocation}</div>
+                              </div>
+                            </div>
+
+                            {/* Sign-in Table (16 rows) */}
+                            <table className="signin-table">
+                              <colgroup>
+                                <col style={{ width: signInColWidths.no + '%' }} />
+                                <col style={{ width: signInColWidths.unit + '%' }} />
+                                <col style={{ width: signInColWidths.name + '%' }} />
+                                <col style={{ width: signInColWidths.sign + '%' }} />
+                                <col style={{ width: signInColWidths.remark + '%' }} />
+                              </colgroup>
+                              <thead>
+                                <tr style={{ backgroundColor: '#404040', color: 'white', height: '38px' }}>
+                                  <th className="text-center font-bold text-[13.5pt]">編號</th>
+                                  <th className="text-center font-bold text-[13.5pt]">單位</th>
+                                  <th className="text-center font-bold text-[13.5pt]">姓名</th>
+                                  <th className="text-center font-bold text-[13.5pt]">簽到</th>
+                                  <th className="text-center font-bold text-[13.5pt]">備註</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {page.rows.map(row => (
+                                  <tr key={'row-' + row.number} style={{ height: signInRowHeight + 'px' }}>
+                                    <td className="text-center font-bold text-[12pt]">{row.number}</td>
+                                    <td className="text-center text-[11.5pt] leading-[1.25] px-1 overflow-hidden" style={{ height: signInRowHeight + 'px' }}>{row.unit}</td>
+                                    <td className="text-center font-bold text-[12.5pt] tracking-widest overflow-hidden">{row.name}</td>
+                                    <td className="text-center"></td>
+                                    <td className="text-center text-[11pt] leading-[1.25] px-1 overflow-hidden">{row.remark}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* FRC Team Member Import Modal */}
+            <MemberImportModal
+              isOpen={showImportModal}
+              onClose={() => setShowImportModal(false)}
+              target={modalTarget}
+              members={members}
+              onImport={handleMembersImported}
+            />
+          </div>
+        );
+      }
+
 
       // --- 11. DATA EXPORT & BACKUP MODAL COMPONENT ---
       function DataExportModal({
