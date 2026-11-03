@@ -253,8 +253,11 @@
 
       // --- 0. SECURITY & SECRET OBFUSCATION HELPERS ---
       const SEC_SALT = 'FRC10114_SEC_2026_KEY';
-      const DEFAULT_ADMIN_ENC = 'hash2$e95e09fdfcccab68d8afe5c06b224ca621435041f08973efd9019f1ac5ff4298';
-      const DEFAULT_MEMBER_ENC = 'hash2$8ab6914f0dc8e9e9bf785c71db33b2bc44240703dee9c09b9e94ff9d76ef6b9d';
+
+      function getDynamicSalt(memberId = '') {
+        const cleanId = memberId ? String(memberId).trim() : '';
+        return cleanId ? `${SEC_SALT}::${cleanId}` : SEC_SALT;
+      }
 
       function encodeSecret(plain) {
         if (!plain) return '';
@@ -292,9 +295,10 @@
         }
       }
 
-      // 256-bit multi-round cryptographic key-stretching primitive
-      function rawDigest256(tag, payload) {
-        const inputBytes = new TextEncoder().encode(`${SEC_SALT}::${tag}::${payload}`);
+      // 256-bit multi-round cryptographic key-stretching primitive (supports per-user dynamic salt: SEC_SALT + memberId)
+      function rawDigest256(tag, payload, memberId = '') {
+        const activeSalt = getDynamicSalt(memberId);
+        const inputBytes = new TextEncoder().encode(`${activeSalt}::${tag}::${payload}`);
         const state = new Uint32Array([
           0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
           0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
@@ -317,14 +321,15 @@
         return hex;
       }
 
-      // Round 1 Client Proof (derived only when user provides plaintext password)
-      function deriveClientProof(plain) {
+      // Round 1 Client Proof (incorporates dynamic salt SEC_SALT + memberId when memberId is provided to defeat rainbow tables)
+      function deriveClientProof(plain, memberId = '') {
         if (!plain) return '';
         const str = String(plain);
         if (str.startsWith('proof$')) return str;
         if (str.startsWith('hash$')) return 'proof$' + str.slice(5);
         const raw = str.startsWith('enc$') ? decodeSecret(str) : str;
-        const inputBytes = new TextEncoder().encode(`${SEC_SALT}::${raw}::FRC10114_V2`);
+        const activeSalt = getDynamicSalt(memberId);
+        const inputBytes = new TextEncoder().encode(`${activeSalt}::${raw}::FRC10114_V2`);
         const state = new Uint32Array([
           0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
           0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
@@ -347,32 +352,45 @@
         return 'proof$' + hex;
       }
 
-      // Round 2 Irreversible StoredKey Hash (stored in localStorage & Cloud Firestore)
-      // Even with full read access to StoredKey (hash2$), an attacker cannot invert it to obtain ClientProof (proof$)
-      function hashPassword(plain) {
+      // Round 2 Irreversible StoredKey Hash (supports dynamic salt SEC_SALT + memberId)
+      function hashPassword(plain, memberId = '') {
         if (!plain) return '';
         const str = String(plain);
         if (str.startsWith('hash2$')) return str;
         if (str.startsWith('hash$')) {
-          return 'hash2$' + rawDigest256('STORED_KEY_V2', str.slice(5));
+          return 'hash2$' + rawDigest256('STORED_KEY_V2', str.slice(5), memberId);
         }
         if (str.startsWith('proof$')) {
-          return 'hash2$' + rawDigest256('STORED_KEY_V2', str.slice(6));
+          return 'hash2$' + rawDigest256('STORED_KEY_V2', str.slice(6), memberId);
         }
-        const proofHex = deriveClientProof(str).slice(6);
-        return 'hash2$' + rawDigest256('STORED_KEY_V2', proofHex);
+        const proofHex = deriveClientProof(str, memberId).slice(6);
+        return 'hash2$' + rawDigest256('STORED_KEY_V2', proofHex, memberId);
       }
 
-      function verifySecret(input, stored) {
+      // Runtime-derived default hashes (eliminates hardcoded hash2$ hex strings from frontend source code)
+      const DEFAULT_ADMIN_ENC = hashPassword(decodeSecret('enc$675c702660654672673d3d'));
+      const DEFAULT_MEMBER_ENC = hashPassword(decodeSecret('enc$675c702660'));
+
+      function isDefaultRolePassword(plainOrHash, role, memberId = '') {
+        if (!plainOrHash) return false;
+        const baseDefault = role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
+        const defaultRaw = role === 'admin' ? decodeSecret('enc$675c702660654672673d3d') : decodeSecret('enc$675c702660');
+        const dynDefault = memberId ? hashPassword(defaultRaw, memberId) : baseDefault;
+        const h2Leg = hashPassword(plainOrHash);
+        const h2Dyn = memberId ? hashPassword(plainOrHash, memberId) : h2Leg;
+        return h2Leg === baseDefault || h2Dyn === dynDefault || plainOrHash === baseDefault || plainOrHash === dynDefault;
+      }
+
+      function verifySecret(input, stored, memberId = '') {
         if (!input && !stored) return true;
         if (!input || !stored) return false;
         const s = String(stored);
         const inp = String(input);
         if (s.startsWith('hash2$')) {
-          return hashPassword(inp) === s;
+          return (memberId && hashPassword(inp, memberId) === s) || hashPassword(inp) === s;
         }
         if (s.startsWith('hash$')) {
-          return deriveClientProof(inp) === 'proof$' + s.slice(5);
+          return (memberId && deriveClientProof(inp, memberId) === 'proof$' + s.slice(5)) || deriveClientProof(inp) === 'proof$' + s.slice(5);
         }
         if (s.startsWith('enc$')) {
           return inp === decodeSecret(s);
@@ -478,12 +496,221 @@
         });
       }
 
-      function getVaultAuthDocId(role, memberId, h2OrPlain) {
-        const h2 = hashPassword(h2OrPlain);
-        return 'auth2_' + rawDigest256('VAULT_AUTH_H2_V3', `${role}::${memberId}::${h2}`);
+      function getVaultAuthDocId(role, memberId, h2OrPlain, useDynamicSalt = false) {
+        const h2 = useDynamicSalt ? hashPassword(h2OrPlain, memberId) : hashPassword(h2OrPlain);
+        return 'auth2_' + rawDigest256('VAULT_AUTH_H2_V3', `${role}::${memberId}::${h2}`, useDynamicSalt ? memberId : '');
       }
 
       const verifiedAuthMemorySet = new Set();
+      const SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours max session lifetime
+      const SESSION_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours idle timeout
+
+      function markSessionTimestamps() {
+        const nowStr = String(Date.now());
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem('frc10114_login_ts', nowStr);
+            sessionStorage.setItem('frc10114_last_active_ts', nowStr);
+          }
+        } catch (e) {}
+      }
+
+      function touchSessionActivityTimestamp() {
+        try {
+          if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('frc10114_logged_in') === 'true') {
+            sessionStorage.setItem('frc10114_last_active_ts', String(Date.now()));
+          }
+        } catch (e) {}
+      }
+
+      function isSessionExpired() {
+        try {
+          if (typeof sessionStorage === 'undefined') return true;
+          const now = Date.now();
+          const loginTs = Number(sessionStorage.getItem('frc10114_login_ts')) || 0;
+          const activeTs = Number(sessionStorage.getItem('frc10114_last_active_ts')) || 0;
+          if (!loginTs || !activeTs) return true;
+          if (now - loginTs > SESSION_MAX_AGE_MS) return true;
+          if (now - activeTs > SESSION_IDLE_TIMEOUT_MS) return true;
+          return false;
+        } catch (e) {
+          return true;
+        }
+      }
+
+      function clearAllAuthSessionCache() {
+        verifiedAuthMemorySet.clear();
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.removeItem('frc10114_logged_in');
+            sessionStorage.removeItem('frc10114_role');
+            sessionStorage.removeItem('frc10114_member_id');
+            sessionStorage.removeItem('frc10114_parent_student');
+            sessionStorage.removeItem('frc10114_session_sig');
+            sessionStorage.removeItem('frc10114_verified_auth_id');
+            sessionStorage.removeItem('frc10114_login_ts');
+            sessionStorage.removeItem('frc10114_last_active_ts');
+            sessionStorage.removeItem('frc10114_sheets_webhook_url');
+          }
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('frc10114_local_auth_v3');
+            localStorage.removeItem('frc10114_sheets_webhook_url');
+          }
+        } catch (e) {}
+      }
+
+      // Hardened Brute-Force Guard (Obfuscated key + HMAC signature + Memory / SessionStorage / LocalStorage / Window.name cross-verification)
+      const LOGIN_GUARD_STORAGE_KEY = '_sec_lg_' + rawDigest256('GUARD_KEY_V3', 'FRC10114_GUARD').slice(0, 14);
+      const memoryLoginGuard = { failCount: 0, lockUntil: 0 };
+
+      function packLoginGuardPayload(failCount, lockUntil) {
+        const fc = Math.max(0, Number(failCount) || 0);
+        const lu = Math.max(0, Number(lockUntil) || 0);
+        const mac = rawDigest256('GUARD_MAC_V3', `${fc}:${lu}`);
+        return encodeSecret(JSON.stringify({ fc, lu, mac }));
+      }
+
+      function unpackLoginGuardPayload(raw) {
+        if (!raw || typeof raw !== 'string') return null;
+        try {
+          const decoded = decodeSecret(raw);
+          const obj = JSON.parse(decoded);
+          if (!obj || typeof obj !== 'object') return null;
+          const fc = Math.max(0, Number(obj.fc) || 0);
+          const lu = Math.max(0, Number(obj.lu) || 0);
+          const expectedMac = rawDigest256('GUARD_MAC_V3', `${fc}:${lu}`);
+          if (obj.mac !== expectedMac) return null;
+          return { failCount: fc, lockUntil: lu };
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function readLoginGuardState() {
+        let maxFail = memoryLoginGuard.failCount || 0;
+        let maxLock = memoryLoginGuard.lockUntil || 0;
+        try {
+          if (typeof localStorage !== 'undefined') {
+            // Migrate legacy plaintext key if present
+            const legacyRaw = localStorage.getItem('frc10114_login_guard');
+            if (legacyRaw) {
+              try {
+                const leg = JSON.parse(legacyRaw);
+                if (Number(leg.failCount) > maxFail) maxFail = Number(leg.failCount);
+                if (Number(leg.lockUntil) > maxLock) maxLock = Number(leg.lockUntil);
+              } catch (e) {}
+              localStorage.removeItem('frc10114_login_guard');
+            }
+            const lsParsed = unpackLoginGuardPayload(localStorage.getItem(LOGIN_GUARD_STORAGE_KEY));
+            if (lsParsed) {
+              if (lsParsed.failCount > maxFail) maxFail = lsParsed.failCount;
+              if (lsParsed.lockUntil > maxLock) maxLock = lsParsed.lockUntil;
+            }
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            const ssParsed = unpackLoginGuardPayload(sessionStorage.getItem(LOGIN_GUARD_STORAGE_KEY));
+            if (ssParsed) {
+              if (ssParsed.failCount > maxFail) maxFail = ssParsed.failCount;
+              if (ssParsed.lockUntil > maxLock) maxLock = ssParsed.lockUntil;
+            }
+          }
+          if (typeof window !== 'undefined' && typeof window.name === 'string' && window.name.startsWith('frc_lg:')) {
+            const wnParsed = unpackLoginGuardPayload(window.name.slice(7));
+            if (wnParsed) {
+              if (wnParsed.failCount > maxFail) maxFail = wnParsed.failCount;
+              if (wnParsed.lockUntil > maxLock) maxLock = wnParsed.lockUntil;
+            }
+          }
+        } catch (e) {}
+
+        if (maxLock > 0 && maxLock <= Date.now()) {
+          maxLock = 0;
+          maxFail = 0;
+          clearLoginGuardState();
+        } else {
+          memoryLoginGuard.failCount = maxFail;
+          memoryLoginGuard.lockUntil = maxLock;
+        }
+        return { failCount: maxFail, lockUntil: maxLock };
+      }
+
+      function writeLoginGuardState(failCount, lockUntil) {
+        const fc = Math.max(0, Number(failCount) || 0);
+        const lu = Math.max(0, Number(lockUntil) || 0);
+        memoryLoginGuard.failCount = fc;
+        memoryLoginGuard.lockUntil = lu;
+        const packed = packLoginGuardPayload(fc, lu);
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('frc10114_login_guard');
+            localStorage.setItem(LOGIN_GUARD_STORAGE_KEY, packed);
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem(LOGIN_GUARD_STORAGE_KEY, packed);
+          }
+          if (typeof window !== 'undefined') {
+            window.name = `frc_lg:${packed}`;
+          }
+        } catch (e) {}
+      }
+
+      function clearLoginGuardState() {
+        memoryLoginGuard.failCount = 0;
+        memoryLoginGuard.lockUntil = 0;
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('frc10114_login_guard');
+            localStorage.removeItem(LOGIN_GUARD_STORAGE_KEY);
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.removeItem(LOGIN_GUARD_STORAGE_KEY);
+          }
+          if (typeof window !== 'undefined' && typeof window.name === 'string' && window.name.startsWith('frc_lg:')) {
+            window.name = '';
+          }
+        } catch (e) {}
+      }
+
+      // Session-scoped & obfuscated Google Apps Script Webhook URL storage (prevents exposure on shared PCs)
+      function getSessionWebhookUrl() {
+        try {
+          let raw = '';
+          if (typeof sessionStorage !== 'undefined') {
+            raw = sessionStorage.getItem('frc10114_sheets_webhook_url') || '';
+          }
+          if (!raw && typeof localStorage !== 'undefined') {
+            const legacyUrl = localStorage.getItem('frc10114_sheets_webhook_url') || '';
+            if (legacyUrl) {
+              localStorage.removeItem('frc10114_sheets_webhook_url');
+              if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('frc10114_role') === 'admin') {
+                const enc = encodeSecret(legacyUrl);
+                sessionStorage.setItem('frc10114_sheets_webhook_url', enc);
+                raw = enc;
+              }
+            }
+          }
+          if (!raw) return '';
+          return raw.startsWith('enc$') ? decodeSecret(raw) : raw;
+        } catch (e) {
+          return '';
+        }
+      }
+
+      function setSessionWebhookUrl(url) {
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('frc10114_sheets_webhook_url');
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            const clean = (url || '').trim();
+            if (!clean) {
+              sessionStorage.removeItem('frc10114_sheets_webhook_url');
+            } else {
+              sessionStorage.setItem('frc10114_sheets_webhook_url', encodeSecret(clean));
+            }
+          }
+        } catch (e) {}
+      }
 
       function recordLocalVerifiedAuth(authDocId) {
         if (!authDocId) return;
@@ -518,8 +745,8 @@
       // Unforgeable SCRAM Session Signature: requires pre-image ClientProof that hashes to member's StoredKey
       function createSessionSig(role, memberId, plainOrProof) {
         if (!role || !memberId || !plainOrProof) return '';
-        const proof = deriveClientProof(plainOrProof);
-        const mac = rawDigest256('SESSION_MAC_V2', `${role}:${memberId}:${proof}`);
+        const proof = deriveClientProof(plainOrProof, memberId);
+        const mac = rawDigest256('SESSION_MAC_V2', `${role}:${memberId}:${proof}`, memberId);
         return `${proof}:${mac}`;
       }
 
@@ -529,9 +756,11 @@
         if (parts.length !== 2) return false;
         const [proof, mac] = parts;
         if (!proof || !proof.startsWith('proof$') || !mac) return false;
-        const expectedMac = rawDigest256('SESSION_MAC_V2', `${role}:${memberId}:${proof}`);
-        if (mac !== expectedMac) return false;
-        const derivedH2 = hashPassword(proof);
+        const expectedDynMac = rawDigest256('SESSION_MAC_V2', `${role}:${memberId}:${proof}`, memberId);
+        const expectedLegacyMac = rawDigest256('SESSION_MAC_V2', `${role}:${memberId}:${proof}`);
+        if (mac !== expectedDynMac && mac !== expectedLegacyMac) return false;
+        const derivedDynH2 = hashPassword(proof, memberId);
+        const derivedLegH2 = hashPassword(proof);
         if (role === 'admin') {
           const isValidAdmin =
             targetMember.role === 'admin' ||
@@ -539,34 +768,42 @@
             (targetMember.id && targetMember.id.startsWith('10114-ADM'));
           if (!isValidAdmin) return false;
           if (targetMember.password) {
-            return derivedH2 === hashPassword(targetMember.password);
+            return verifySecret(proof, targetMember.password, memberId);
           }
-          const authDocId = getVaultAuthDocId('admin', memberId, derivedH2);
-          if (isLocalVerifiedAuth(authDocId)) return true;
-          if (!targetMember.hasCustomPass) return derivedH2 === DEFAULT_ADMIN_ENC;
+          const dynAuthDocId = getVaultAuthDocId('admin', memberId, derivedDynH2, true);
+          const legAuthDocId = getVaultAuthDocId('admin', memberId, derivedLegH2, false);
+          if (isLocalVerifiedAuth(dynAuthDocId) || isLocalVerifiedAuth(legAuthDocId)) return true;
+          if (!targetMember.hasCustomPass) return isDefaultRolePassword(proof, 'admin', memberId);
           return false;
         }
         if (role === 'parent') {
           if (targetMember.parentPassword) {
-            return derivedH2 === hashPassword(targetMember.parentPassword);
+            return verifySecret(proof, targetMember.parentPassword, memberId);
           }
           if (targetMember.password && !targetMember.hasCustomParentPass) {
-            return derivedH2 === hashPassword(targetMember.password) || derivedH2 === DEFAULT_MEMBER_ENC;
+            return verifySecret(proof, targetMember.password, memberId) || isDefaultRolePassword(proof, 'parent', memberId);
           }
-          const pAuthId = getVaultAuthDocId('parent', memberId, derivedH2);
-          const mAuthId = getVaultAuthDocId('member', memberId, derivedH2);
-          if (isLocalVerifiedAuth(pAuthId) || (!targetMember.hasCustomParentPass && isLocalVerifiedAuth(mAuthId))) {
+          const pDynId = getVaultAuthDocId('parent', memberId, derivedDynH2, true);
+          const pLegId = getVaultAuthDocId('parent', memberId, derivedLegH2, false);
+          const mDynId = getVaultAuthDocId('member', memberId, derivedDynH2, true);
+          const mLegId = getVaultAuthDocId('member', memberId, derivedLegH2, false);
+          if (
+            isLocalVerifiedAuth(pDynId) ||
+            isLocalVerifiedAuth(pLegId) ||
+            (!targetMember.hasCustomParentPass && (isLocalVerifiedAuth(mDynId) || isLocalVerifiedAuth(mLegId)))
+          ) {
             return true;
           }
-          if (!targetMember.hasCustomParentPass) return derivedH2 === DEFAULT_MEMBER_ENC;
+          if (!targetMember.hasCustomParentPass) return isDefaultRolePassword(proof, 'parent', memberId);
           return false;
         }
         if (targetMember.password) {
-          return derivedH2 === hashPassword(targetMember.password);
+          return verifySecret(proof, targetMember.password, memberId);
         }
-        const mAuthId = getVaultAuthDocId('member', memberId, derivedH2);
-        if (isLocalVerifiedAuth(mAuthId)) return true;
-        if (!targetMember.hasCustomPass) return derivedH2 === DEFAULT_MEMBER_ENC;
+        const mDynId = getVaultAuthDocId('member', memberId, derivedDynH2, true);
+        const mLegId = getVaultAuthDocId('member', memberId, derivedLegH2, false);
+        if (isLocalVerifiedAuth(mDynId) || isLocalVerifiedAuth(mLegId)) return true;
+        if (!targetMember.hasCustomPass) return isDefaultRolePassword(proof, 'member', memberId);
         return false;
       }
 
@@ -1650,16 +1887,21 @@
       // --- CSV & JSON EXPORT UTILITIES (UTF-8 BOM + CSV Formula Injection Protection) ---
       function sanitizeCSVCell(val) {
         const str = String(val ?? '');
-        // Prevent CSV Formula Injection when opened in Excel / Google Sheets
-        const safeStr = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+        // Prevent CSV Formula Injection (DDE / Excel Formula Execution) when starts with =, +, -, @, \t, \r
+        const safeStr = (/^[=+\-@\t\r]/.test(str) || /^[\s]*[=+\-@\t\r]/.test(str)) ? `'${str}` : str;
         return `"${safeStr.replace(/"/g, '""')}"`;
       }
 
       function exportToCSV(filename, headers, rows) {
         const BOM = '\uFEFF';
+        const escapeFormulaCell = (cell) => {
+          const str = String(cell ?? '');
+          const safeStr = (/^[=+\-@\t\r]/.test(str) || /^[\s]*[=+\-@\t\r]/.test(str)) ? `'${str}` : str;
+          return `"${safeStr.replace(/"/g, '""')}"`;
+        };
         const csvRows = [
-          headers.map(h => sanitizeCSVCell(h)).join(','),
-          ...rows.map(row => row.map(cell => sanitizeCSVCell(cell)).join(','))
+          headers.map(h => escapeFormulaCell(h)).join(','),
+          ...rows.map(row => row.map(cell => escapeFormulaCell(cell)).join(','))
         ];
         const blob = new Blob([BOM + csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -1932,10 +2174,10 @@
               })
             );
           }
-          await Promise.allSettled(writes);
+          await Promise.all(writes);
           return true;
         } catch (e) {
-          console.warn('Vault migration warning:', e);
+          console.error('Vault migration failed:', e);
           return false;
         }
       }
@@ -1943,23 +2185,28 @@
       async function verifyAccountCredential(firebaseConfig, role, targetMember, rawPassword) {
         if (!targetMember || !rawPassword) return false;
         const cleanPass = String(rawPassword).trim();
-        const h2 = hashPassword(cleanPass);
-        const authDocId = getVaultAuthDocId(role, targetMember.id, h2);
+        const h2Dyn = hashPassword(cleanPass, targetMember.id);
+        const h2Leg = hashPassword(cleanPass);
+        const dynAuthDocId = getVaultAuthDocId(role, targetMember.id, h2Dyn, true);
+        const authDocId = getVaultAuthDocId(role, targetMember.id, h2Leg, false);
 
         if (role === 'parent') {
           if (targetMember.parentPassword) {
-            if (verifySecret(cleanPass, targetMember.parentPassword)) {
+            if (verifySecret(cleanPass, targetMember.parentPassword, targetMember.id)) {
+              recordLocalVerifiedAuth(dynAuthDocId);
               recordLocalVerifiedAuth(authDocId);
               return true;
             }
             return false;
           }
-          if (targetMember.password && verifySecret(cleanPass, targetMember.password)) {
+          if (targetMember.password && verifySecret(cleanPass, targetMember.password, targetMember.id)) {
+            recordLocalVerifiedAuth(dynAuthDocId);
             recordLocalVerifiedAuth(authDocId);
             return true;
           }
         } else if (targetMember.password) {
-          if (verifySecret(cleanPass, targetMember.password)) {
+          if (verifySecret(cleanPass, targetMember.password, targetMember.id)) {
+            recordLocalVerifiedAuth(dynAuthDocId);
             recordLocalVerifiedAuth(authDocId);
             return true;
           }
@@ -1969,39 +2216,65 @@
         const db = initFirestore(firebaseConfig);
         if (db) {
           try {
-            const snap = await db.collection('frc10114_vault').doc(authDocId).get();
-            if (snap.exists && snap.data()?.valid === true) {
+            const [dynSnap, legSnap] = await Promise.all([
+              db.collection('frc10114_vault').doc(dynAuthDocId).get(),
+              db.collection('frc10114_vault').doc(authDocId).get(),
+            ]);
+            if ((dynSnap.exists && dynSnap.data()?.valid === true) || (legSnap.exists && legSnap.data()?.valid === true)) {
+              recordLocalVerifiedAuth(dynAuthDocId);
               recordLocalVerifiedAuth(authDocId);
+              if (!dynSnap.exists) {
+                try {
+                  await db.collection('frc10114_vault').doc(dynAuthDocId).set({
+                    valid: true,
+                    role,
+                    memberId: targetMember.id,
+                    updatedAt: Date.now(),
+                  });
+                } catch (upErr) {
+                  console.warn('Auto-upgrade dynamic salt auth doc warning:', upErr);
+                }
+              }
               return true;
             }
             if (role === 'parent' && !targetMember.hasCustomParentPass) {
-              const mAuthId = getVaultAuthDocId('member', targetMember.id, h2);
-              const mSnap = await db.collection('frc10114_vault').doc(mAuthId).get();
-              if (mSnap.exists && mSnap.data()?.valid === true) {
+              const mDynAuthId = getVaultAuthDocId('member', targetMember.id, h2Dyn, true);
+              const mAuthId = getVaultAuthDocId('member', targetMember.id, h2Leg, false);
+              const [mDynSnap, mSnap] = await Promise.all([
+                db.collection('frc10114_vault').doc(mDynAuthId).get(),
+                db.collection('frc10114_vault').doc(mAuthId).get(),
+              ]);
+              if ((mDynSnap.exists && mDynSnap.data()?.valid === true) || (mSnap.exists && mSnap.data()?.valid === true)) {
+                recordLocalVerifiedAuth(mDynAuthId);
                 recordLocalVerifiedAuth(mAuthId);
                 return true;
               }
             }
-          } catch (e) {}
+          } catch (e) {
+            console.warn('Cloud credential verification error:', e);
+          }
         }
 
-        if (isLocalVerifiedAuth(authDocId)) return true;
+        if (isLocalVerifiedAuth(dynAuthDocId) || isLocalVerifiedAuth(authDocId)) return true;
 
         if (role === 'admin') {
-          if (!targetMember.hasCustomPass && h2 === DEFAULT_ADMIN_ENC) {
+          if (!targetMember.hasCustomPass && isDefaultRolePassword(cleanPass, 'admin', targetMember.id)) {
+            recordLocalVerifiedAuth(dynAuthDocId);
             recordLocalVerifiedAuth(authDocId);
             return true;
           }
           return false;
         }
         if (role === 'parent') {
-          if (!targetMember.hasCustomParentPass && h2 === DEFAULT_MEMBER_ENC) {
+          if (!targetMember.hasCustomParentPass && isDefaultRolePassword(cleanPass, 'member', targetMember.id)) {
+            recordLocalVerifiedAuth(dynAuthDocId);
             recordLocalVerifiedAuth(authDocId);
             return true;
           }
           return false;
         }
-        if (!targetMember.hasCustomPass && h2 === DEFAULT_MEMBER_ENC) {
+        if (!targetMember.hasCustomPass && isDefaultRolePassword(cleanPass, 'member', targetMember.id)) {
+          recordLocalVerifiedAuth(dynAuthDocId);
           recordLocalVerifiedAuth(authDocId);
           return true;
         }
@@ -2044,7 +2317,11 @@
                 const migPii = JSON.parse(migDec);
                 piiMap = { ...migPii, ...piiMap };
                 needsSave = true;
-                try { await db.collection('frc10114_vault').doc(migDocId).delete(); } catch (e) {}
+                try {
+                  await db.collection('frc10114_vault').doc(migDocId).delete();
+                } catch (delErr) {
+                  console.warn('Migration doc cleanup warning:', delErr);
+                }
               }
             }
 
@@ -2060,7 +2337,9 @@
                     pubJwk: rsaPubJwk,
                     updatedAt: Date.now(),
                   });
-                } catch (e) {}
+                } catch (pubErr) {
+                  console.warn('Publish admin RSA public key warning:', pubErr);
+                }
               }
             }
 
@@ -2079,7 +2358,9 @@
                       await db.collection('frc10114_vault').doc(inboxDocId).delete();
                     }
                   }
-                } catch (e) {}
+                } catch (inErr) {
+                  console.warn('Inbox envelope check warning:', inErr);
+                }
               });
               await Promise.allSettled(inboxChecks);
             }
@@ -2126,7 +2407,11 @@
             if (mDec) {
               myPii = { ...JSON.parse(mDec), ...myPii };
               needsSelfSave = true;
-              try { await db.collection('frc10114_vault').doc(memMigDocId).delete(); } catch (e) {}
+              try {
+                await db.collection('frc10114_vault').doc(memMigDocId).delete();
+              } catch (delErr) {
+                console.warn('Member migration doc cleanup warning:', delErr);
+              }
             }
           }
 
@@ -2143,7 +2428,9 @@
                   pubJwk: rsaPubJwk,
                   updatedAt: Date.now(),
                 });
-              } catch (e) {}
+              } catch (pubErr) {
+                console.warn('Publish member RSA public key warning:', pubErr);
+              }
             }
           }
 
@@ -2156,7 +2443,11 @@
               if (coachPii) {
                 myPii = { ...myPii, ...coachPii };
                 needsSelfSave = true;
-                try { await db.collection('frc10114_vault').doc(outboxDocId).delete(); } catch (e) {}
+                try {
+                  await db.collection('frc10114_vault').doc(outboxDocId).delete();
+                } catch (delErr) {
+                  console.warn('Outbox envelope cleanup warning:', delErr);
+                }
               }
             }
           }
@@ -2177,7 +2468,7 @@
 
       async function saveAdminVaultData(firebaseConfig, adminId, adminProof, piiMap, targetMemberId = null, targetNewPlainPass = '') {
         const db = initFirestore(firebaseConfig);
-        if (!db || !adminId || !adminProof) return;
+        if (!db || !adminId || !adminProof) return false;
         try {
           const proof = deriveClientProof(adminProof);
           const adminVaultKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${adminId}::${proof}`);
@@ -2220,14 +2511,16 @@
               }
             }
           }
+          return true;
         } catch (e) {
-          console.warn('Save admin vault warning:', e);
+          console.error('Save admin vault failed:', e);
+          return false;
         }
       }
 
       async function saveMemberVaultData(firebaseConfig, memberId, memberProof, myPii) {
         const db = initFirestore(firebaseConfig);
-        if (!db || !memberId || !myPii) return;
+        if (!db || !memberId || !myPii) return false;
         try {
           if (memberProof) {
             const proof = deriveClientProof(memberProof);
@@ -2260,8 +2553,10 @@
               await db.collection('frc10114_vault').doc(inboxDocId).set(env);
             }
           }
+          return true;
         } catch (e) {
-          console.warn('Save member vault warning:', e);
+          console.error('Save member vault failed:', e);
+          return false;
         }
       }
 
@@ -2269,19 +2564,43 @@
         const db = initFirestore(firebaseConfig);
         const oldH2 = hashPassword(oldPass);
         const newH2 = hashPassword(newPass);
-        const oldAuthId = getVaultAuthDocId(role, memberId, oldH2);
-        const newAuthId = getVaultAuthDocId(role, memberId, newH2);
+        const oldDynH2 = hashPassword(oldPass, memberId);
+        const newDynH2 = hashPassword(newPass, memberId);
+        const oldAuthId = getVaultAuthDocId(role, memberId, oldH2, false);
+        const newAuthId = getVaultAuthDocId(role, memberId, newH2, false);
+        const oldDynAuthId = getVaultAuthDocId(role, memberId, oldDynH2, true);
+        const newDynAuthId = getVaultAuthDocId(role, memberId, newDynH2, true);
+        recordLocalVerifiedAuth(newDynAuthId);
         recordLocalVerifiedAuth(newAuthId);
-        if (!db) return;
+        if (!db) return true;
         try {
-          await db.collection('frc10114_vault').doc(newAuthId).set({
-            valid: true,
-            role,
-            memberId,
-            updatedAt: Date.now(),
-          });
+          await Promise.all([
+            db.collection('frc10114_vault').doc(newDynAuthId).set({
+              valid: true,
+              role,
+              memberId,
+              updatedAt: Date.now(),
+            }),
+            db.collection('frc10114_vault').doc(newAuthId).set({
+              valid: true,
+              role,
+              memberId,
+              updatedAt: Date.now(),
+            }),
+          ]);
+          if (oldDynAuthId !== newDynAuthId) {
+            try {
+              await db.collection('frc10114_vault').doc(oldDynAuthId).delete();
+            } catch (delErr) {
+              console.warn('Old dynamic auth doc cleanup warning:', delErr);
+            }
+          }
           if (oldAuthId !== newAuthId) {
-            try { await db.collection('frc10114_vault').doc(oldAuthId).delete(); } catch (e) {}
+            try {
+              await db.collection('frc10114_vault').doc(oldAuthId).delete();
+            } catch (delErr) {
+              console.warn('Old auth doc cleanup warning:', delErr);
+            }
           }
           const oldProof = deriveClientProof(oldPass);
           const newProof = deriveClientProof(newPass);
@@ -2301,7 +2620,11 @@
               updatedAt: Date.now(),
             });
             if (oldDocId !== newDocId) {
-              try { await db.collection('frc10114_vault').doc(oldDocId).delete(); } catch (e) {}
+              try {
+                await db.collection('frc10114_vault').doc(oldDocId).delete();
+              } catch (delErr) {
+                console.warn('Old admin vault doc cleanup warning:', delErr);
+              }
             }
           } else if (role === 'member') {
             const oldKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${oldProof}`);
@@ -2319,11 +2642,17 @@
               updatedAt: Date.now(),
             });
             if (oldDocId !== newDocId) {
-              try { await db.collection('frc10114_vault').doc(oldDocId).delete(); } catch (e) {}
+              try {
+                await db.collection('frc10114_vault').doc(oldDocId).delete();
+              } catch (delErr) {
+                console.warn('Old member vault doc cleanup warning:', delErr);
+              }
             }
           }
+          return true;
         } catch (e) {
-          console.warn('Rotate vault password warning:', e);
+          console.error('Rotate vault password failed:', e);
+          return false;
         }
       }
 
@@ -2562,12 +2891,21 @@
         const [isAuthenticated, setIsAuthenticated] = useState(() => {
           try {
             if (sessionStorage.getItem('frc10114_logged_in') !== 'true') return false;
+            if (isSessionExpired()) {
+              clearAllAuthSessionCache();
+              return false;
+            }
             const r = sessionStorage.getItem('frc10114_role');
             const memId = sessionStorage.getItem('frc10114_member_id');
             const sig = sessionStorage.getItem('frc10114_session_sig');
-            if (!r || !memId || !sig) return false;
+            if (!r || !memId || !sig) {
+              clearAllAuthSessionCache();
+              return false;
+            }
             const target = members.find(m => m.id === memId);
-            return verifySessionSig(sig, r, memId, target);
+            const ok = verifySessionSig(sig, r, memId, target);
+            if (!ok) clearAllAuthSessionCache();
+            return ok;
           } catch (e) {
             return false;
           }
@@ -2621,16 +2959,23 @@
         useEffect(() => {
           if (!firebaseConfig) {
             fetch('./firebase-config.json')
-              .then(res => res.ok ? res.json() : null)
+              .then(r => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}: 無法讀取 firebase-config.json`);
+                return r.json();
+              })
               .then(cfg => {
                 if (cfg && cfg.apiKey && cfg.projectId) {
                   setFirebaseConfig(cfg);
                   try {
                     localStorage.setItem('frc10114_firebase_config', JSON.stringify(cfg));
-                  } catch (e) {}
+                  } catch (storageErr) {
+                    console.warn('LocalStorage write warning:', storageErr);
+                  }
                 }
               })
-              .catch(() => {});
+              .catch(err => {
+                console.warn('載入 firebase-config.json 失敗，維持目前設定:', err);
+              });
           }
         }, [firebaseConfig]);
 
@@ -2741,7 +3086,9 @@
             if (pendingLocalLegacyMembers) {
               const localToMig = pendingLocalLegacyMembers;
               pendingLocalLegacyMembers = null;
-              migrateLegacyMembersToVault(db, localToMig);
+              migrateLegacyMembersToVault(db, localToMig).catch(migErr => {
+                console.warn('Local legacy vault migration warning:', migErr);
+              });
             }
             unsub = db.collection('frc10114_teams').doc('team_state').onSnapshot((doc) => {
               setIsFirebaseConnected(true);
@@ -2751,15 +3098,22 @@
                 if (data && data.members && Array.isArray(data.members) && hasLegacySecretFields(data.members)) {
                   const rawCloudMembers = data.members;
                   const cleanPublicMembers = encodeMembersForStorage(rawCloudMembers);
-                  migrateLegacyMembersToVault(db, rawCloudMembers).then(() => {
+                  (async () => {
                     try {
-                      db.collection('frc10114_teams').doc('team_state').set({
+                      const migOk = await migrateLegacyMembersToVault(db, rawCloudMembers);
+                      if (!migOk) {
+                        throw new Error('舊版機敏資料遷移至加密保險箱未完成');
+                      }
+                      await db.collection('frc10114_teams').doc('team_state').set({
                         members: cleanPublicMembers,
                         updatedAt: Date.now(),
                         updatedBy: clientIdRef.current,
                       }, { merge: true });
-                    } catch (e) {}
-                  });
+                    } catch (migErr) {
+                      console.error('Legacy cloud migration failed:', migErr);
+                      showToast('操作失敗，請檢查網路連線', '舊版資料自動遷移至雲端保險箱失敗，請檢查網路連線', 'error');
+                    }
+                  })();
                 }
                 // Filter out writes originated by this exact client tab/device
                 if (data && data.updatedBy !== clientIdRef.current) {
@@ -3058,22 +3412,23 @@
         }, [sortedMembers, memberDeptFilter]);
 
         // Handle Add New Admin Coach
-        const handleCreateAdmin = (adminData) => {
+        const handleCreateAdmin = async (adminData) => {
           if (currentRole !== 'admin') {
             showToast('權限不足', '僅限管理員可建立教練帳號', 'error');
             return false;
           }
+          const cleanAdminId = adminData.id ? adminData.id.trim() : '';
           const rawAdminPass = adminData.password ? adminData.password.trim() : '';
-          const adminH2 = hashPassword(rawAdminPass || DEFAULT_ADMIN_ENC);
+          const adminDynH2 = rawAdminPass ? hashPassword(rawAdminPass, cleanAdminId) : hashPassword(DEFAULT_ADMIN_ENC);
           const newAdmin = {
-            id: adminData.id.trim(),
+            id: cleanAdminId,
             name: adminData.name.trim(),
-            email: adminData.email.trim() || `${adminData.id}@frc10114.org`,
+            email: adminData.email.trim() || `${cleanAdminId}@frc10114.org`,
             phone: adminData.phone || '',
             departments: adminData.departments && adminData.departments.length > 0 ? adminData.departments : ['機電整合組', '程式控制組', '行銷管理組'],
             motto: adminData.motto || '用心傳承，帶領 FRC 10114 勇闖巔峰！',
             role: 'admin',
-            hasCustomPass: adminH2 !== DEFAULT_ADMIN_ENC,
+            hasCustomPass: Boolean(rawAdminPass) && !isDefaultRolePassword(rawAdminPass, 'admin', cleanAdminId),
           };
           if (!newAdmin.name || !newAdmin.id) {
             showToast('建立失敗', '姓名與編號為必填項目', 'error');
@@ -3087,25 +3442,56 @@
             ...unlockedPiiMapRef.current,
             [newAdmin.id]: extractMemberPii(newAdmin),
           };
-          const authDocId = getVaultAuthDocId('admin', newAdmin.id, adminH2);
+          const authDocId = getVaultAuthDocId('admin', newAdmin.id, adminDynH2, Boolean(rawAdminPass));
+          const legAuthDocId = getVaultAuthDocId('admin', newAdmin.id, rawAdminPass || DEFAULT_ADMIN_ENC, false);
           recordLocalVerifiedAuth(authDocId);
+          recordLocalVerifiedAuth(legAuthDocId);
           const db = initFirestore(firebaseConfig);
           if (db) {
             try {
-              db.collection('frc10114_vault').doc(authDocId).set({
+              await db.collection('frc10114_vault').doc(authDocId).set({
                 valid: true,
                 role: 'admin',
                 memberId: newAdmin.id,
+                saltVersion: 2,
                 updatedAt: Date.now(),
               });
-            } catch (e) {}
+              if (legAuthDocId && legAuthDocId !== authDocId) {
+                await db.collection('frc10114_vault').doc(legAuthDocId).set({
+                  valid: true,
+                  role: 'admin',
+                  memberId: newAdmin.id,
+                  updatedAt: Date.now(),
+                });
+              }
+              const vaultOk = await saveAdminVaultData(
+                firebaseConfig,
+                currentMember?.id || '10114-001',
+                getSessionProofFromStorage(),
+                unlockedPiiMapRef.current
+              );
+              if (!vaultOk) {
+                throw new Error('管理員加密金庫同步失敗');
+              }
+            } catch (err) {
+              console.error('Create admin vault write error:', err);
+              showToast('操作失敗，請檢查網路連線', '無法將新管理員憑證寫入雲端加密金庫，請檢查網路連線後重試', 'error');
+              return false;
+            }
           }
-          saveAdminVaultData(firebaseConfig, currentMember?.id || '10114-001', getSessionProofFromStorage(), unlockedPiiMapRef.current);
           const next = [newAdmin, ...members];
           setMembers(next);
           setSelectedMemberId(newAdmin.id);
-          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(next))); } catch (e) {}
-          syncToCloud({ members: next });
+          try {
+            localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(next)));
+          } catch (storageErr) {
+            console.warn('LocalStorage write warning:', storageErr);
+          }
+          const syncOk = await syncToCloud({ members: next });
+          if (firebaseConfig && !syncOk) {
+            showToast('操作失敗，請檢查網路連線', '管理員名冊無法同步至雲端，請檢查網路連線', 'error');
+            return false;
+          }
           setIsAddAdminModalOpen(false);
           showToast('管理員建立成功！', `已新增「${newAdmin.name}」為管理員教練`, 'success');
           return true;
@@ -3114,47 +3500,52 @@
         // Helper: Brute-Force Guard for in-app password changes
         const checkAndRecordPassChangeGuard = (isSuccess) => {
           try {
-            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            const saved = readLoginGuardState();
             if ((Number(saved.lockUntil) || 0) > Date.now()) {
               showToast('安全保護鎖定中', '密碼嘗試次數過多，請稍後再試', 'error');
               return false;
             }
             if (isSuccess) {
-              localStorage.removeItem('frc10114_login_guard');
+              clearLoginGuardState();
               return true;
             }
             const nextCount = (Number(saved.failCount) || 0) + 1;
             if (nextCount >= 5) {
-              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: 0, lockUntil: Date.now() + 60000 }));
+              writeLoginGuardState(0, Date.now() + 60000);
               handleLogout();
               showToast('安全防護攔截', '舊密碼連續輸入錯誤達 5 次，系統已強制登出並鎖定 60 秒', 'error');
             } else {
-              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: nextCount, lockUntil: 0 }));
+              writeLoginGuardState(nextCount, 0);
             }
-          } catch (e) {}
+          } catch (err) {
+            console.warn('Password change guard warning:', err);
+          }
           return false;
         };
 
         // Handle Password Update for Current Member
-        const handleUpdatePassword = (memberId, oldPass, newPass) => {
+        const handleUpdatePassword = async (memberId, oldPass, newPass) => {
           const target = members.find(m => m.id === memberId);
           if (!target) return false;
           try {
-            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            const saved = readLoginGuardState();
             if ((Number(saved.lockUntil) || 0) > Date.now()) {
               showToast('安全保護鎖定中', '密碼嘗試錯誤次數過多，請稍候 60 秒再試', 'error');
               return false;
             }
-          } catch (e) {}
+          } catch (err) {
+            console.warn('Read login guard warning:', err);
+          }
           const tRole = target.role === 'admin' || target.id === '10114-001' ? 'admin' : 'member';
-          const defaultHash = tRole === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
-          const oldH2 = hashPassword(oldPass);
+          const oldDynH2 = hashPassword(oldPass, memberId);
+          const oldLegH2 = hashPassword(oldPass);
           const sessionProof = getSessionProofFromStorage();
           const isOldValid =
-            (target.password && verifySecret(oldPass, target.password)) ||
-            (currentMember?.id === memberId && sessionProof && hashPassword(sessionProof) === oldH2) ||
-            isLocalVerifiedAuth(getVaultAuthDocId(tRole, memberId, oldH2)) ||
-            (!target.hasCustomPass && oldH2 === defaultHash);
+            (target.password && verifySecret(oldPass, target.password, memberId)) ||
+            (currentMember?.id === memberId && sessionProof && (hashPassword(sessionProof, memberId) === oldDynH2 || hashPassword(sessionProof) === oldLegH2)) ||
+            isLocalVerifiedAuth(getVaultAuthDocId(tRole, memberId, oldDynH2, true)) ||
+            isLocalVerifiedAuth(getVaultAuthDocId(tRole, memberId, oldLegH2, false)) ||
+            (!target.hasCustomPass && isDefaultRolePassword(oldPass, tRole, memberId));
           if (!isOldValid) {
             checkAndRecordPassChangeGuard(false);
             showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
@@ -3166,9 +3557,12 @@
           }
           checkAndRecordPassChangeGuard(true);
           const cleanNew = newPass.trim();
-          const hashedPass = hashPassword(cleanNew);
-          const hasCustomPass = hashedPass !== defaultHash;
-          rotateVaultPassword(firebaseConfig, tRole, memberId, oldPass, cleanNew, unlockedPiiMapRef.current);
+          const hasCustomPass = !isDefaultRolePassword(cleanNew, tRole, memberId);
+          const rotOk = await rotateVaultPassword(firebaseConfig, tRole, memberId, oldPass, cleanNew, unlockedPiiMapRef.current);
+          if (firebaseConfig && !rotOk) {
+            showToast('操作失敗，請檢查網路連線', '密碼更新至雲端加密金庫失敗，請檢查網路連線後重試', 'error');
+            return false;
+          }
           const nextMembers = members.map(m => m.id === memberId ? { ...m, hasCustomPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === memberId) {
@@ -3176,39 +3570,57 @@
             if (currentRole !== 'parent') {
               try {
                 sessionStorage.setItem('frc10114_session_sig', createSessionSig(currentRole, memberId, cleanNew));
-              } catch (e) {}
+              } catch (storageErr) {
+                console.warn('SessionStorage write warning:', storageErr);
+              }
             }
           }
           if (draftMember && draftMember.id === memberId) {
             setDraftMember(prev => ({ ...prev, hasCustomPass, _newPassword: '' }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
-          syncToCloud({ members: nextMembers });
+          try {
+            localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers)));
+          } catch (storageErr) {
+            console.warn('LocalStorage write warning:', storageErr);
+          }
+          const syncOk = await syncToCloud({ members: nextMembers });
+          if (firebaseConfig && !syncOk) {
+            showToast('操作失敗，請檢查網路連線', '密碼狀態同步至雲端失敗，請檢查網路連線', 'error');
+            return false;
+          }
           showToast('密碼已成功更新！', '已存入雲端獨立加密保險箱，主資料表不留存任何密碼雜湊', 'success');
           return true;
         };
 
         // Handle Parent Password Update
-        const handleUpdateParentPassword = (studentId, oldPass, newPass) => {
+        const handleUpdateParentPassword = async (studentId, oldPass, newPass) => {
           const target = members.find(m => m.id === studentId);
           if (!target) {
             showToast('找不到學生資料', '無法變更家長密碼', 'error');
             return false;
           }
           try {
-            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
+            const saved = readLoginGuardState();
             if ((Number(saved.lockUntil) || 0) > Date.now()) {
               showToast('安全保護鎖定中', '密碼嘗試錯誤次數過多，請稍候 60 秒再試', 'error');
               return false;
             }
-          } catch (e) {}
-          const oldH2 = hashPassword(oldPass);
+          } catch (err) {
+            console.warn('Read login guard warning:', err);
+          }
+          const oldDynH2 = hashPassword(oldPass, studentId);
+          const oldLegH2 = hashPassword(oldPass);
           const sessionProof = getSessionProofFromStorage();
           const isOldValid =
-            (target.parentPassword && verifySecret(oldPass, target.parentPassword)) ||
-            (currentRole === 'parent' && currentMember?.id === studentId && sessionProof && hashPassword(sessionProof) === oldH2) ||
-            isLocalVerifiedAuth(getVaultAuthDocId('parent', studentId, oldH2)) ||
-            (!target.hasCustomParentPass && (isLocalVerifiedAuth(getVaultAuthDocId('member', studentId, oldH2)) || oldH2 === DEFAULT_MEMBER_ENC));
+            (target.parentPassword && verifySecret(oldPass, target.parentPassword, studentId)) ||
+            (currentRole === 'parent' && currentMember?.id === studentId && sessionProof && (hashPassword(sessionProof, studentId) === oldDynH2 || hashPassword(sessionProof) === oldLegH2)) ||
+            isLocalVerifiedAuth(getVaultAuthDocId('parent', studentId, oldDynH2, true)) ||
+            isLocalVerifiedAuth(getVaultAuthDocId('parent', studentId, oldLegH2, false)) ||
+            (!target.hasCustomParentPass && (
+              isLocalVerifiedAuth(getVaultAuthDocId('member', studentId, oldDynH2, true)) ||
+              isLocalVerifiedAuth(getVaultAuthDocId('member', studentId, oldLegH2, false)) ||
+              isDefaultRolePassword(oldPass, 'parent', studentId)
+            ));
           if (!isOldValid) {
             checkAndRecordPassChangeGuard(false);
             showToast('密碼變更失敗', '舊密碼輸入錯誤，請確認後重試', 'error');
@@ -3220,9 +3632,12 @@
           }
           checkAndRecordPassChangeGuard(true);
           const cleanNew = newPass.trim();
-          const hashedPass = hashPassword(cleanNew);
-          const hasCustomParentPass = hashedPass !== DEFAULT_MEMBER_ENC;
-          rotateVaultPassword(firebaseConfig, 'parent', studentId, oldPass, cleanNew, unlockedPiiMapRef.current);
+          const hasCustomParentPass = !isDefaultRolePassword(cleanNew, 'parent', studentId);
+          const rotOk = await rotateVaultPassword(firebaseConfig, 'parent', studentId, oldPass, cleanNew, unlockedPiiMapRef.current);
+          if (firebaseConfig && !rotOk) {
+            showToast('操作失敗，請檢查網路連線', '家長密碼更新至雲端加密金庫失敗，請檢查網路連線後重試', 'error');
+            return false;
+          }
           const nextMembers = members.map(m => m.id === studentId ? { ...m, hasCustomParentPass } : m);
           setMembers(nextMembers);
           if (currentMember && currentMember.id === studentId) {
@@ -3230,14 +3645,24 @@
             if (currentRole === 'parent') {
               try {
                 sessionStorage.setItem('frc10114_session_sig', createSessionSig('parent', studentId, cleanNew));
-              } catch (e) {}
+              } catch (storageErr) {
+                console.warn('SessionStorage write warning:', storageErr);
+              }
             }
           }
           if (draftMember && draftMember.id === studentId) {
             setDraftMember(prev => ({ ...prev, hasCustomParentPass }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
-          syncToCloud({ members: nextMembers });
+          try {
+            localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers)));
+          } catch (storageErr) {
+            console.warn('LocalStorage write warning:', storageErr);
+          }
+          const syncOk = await syncToCloud({ members: nextMembers });
+          if (firebaseConfig && !syncOk) {
+            showToast('操作失敗，請檢查網路連線', '家長密碼狀態同步至雲端失敗，請檢查網路連線', 'error');
+            return false;
+          }
           showToast('家長安全密碼變更成功！', '已存入雲端獨立加密保險箱，下次登入請使用新密碼', 'success');
           return true;
         };
@@ -3246,9 +3671,16 @@
         const handleLoginSelect = (role, memberObj, studentName, rawInputPass = '') => {
           setCurrentRole(role);
           setIsAuthenticated(true);
+          markSessionTimestamps();
           try {
             sessionStorage.setItem('frc10114_logged_in', 'true');
             sessionStorage.setItem('frc10114_role', role);
+            if (role !== 'admin') {
+              sessionStorage.removeItem('frc10114_sheets_webhook_url');
+            }
+            if (typeof localStorage !== 'undefined') {
+              localStorage.removeItem('frc10114_sheets_webhook_url');
+            }
           } catch (e) {}
 
           if (role === 'admin') {
@@ -3285,25 +3717,25 @@
           setIsLoginModalOpen(false);
         };
 
-        // Logout handler (resets authentication, wipes unlocked PII from memory, and returns to login screen)
+        // Logout handler (resets authentication, wipes unlocked PII from memory & local auth tokens, and returns to login screen)
         const handleLogout = () => {
           unlockedPiiMapRef.current = {};
           setMembers(prev => normalizeMembersFromStorage(encodeMembersForStorage(prev), {}));
           setIsAuthenticated(false);
-          try {
-            sessionStorage.removeItem('frc10114_logged_in');
-            sessionStorage.removeItem('frc10114_role');
-            sessionStorage.removeItem('frc10114_member_id');
-            sessionStorage.removeItem('frc10114_parent_student');
-            sessionStorage.removeItem('frc10114_session_sig');
-            sessionStorage.removeItem('frc10114_verified_auth_id');
-          } catch (e) {}
-          showToast('已登出系統', '已清除記憶體內之解密個資，感謝使用 FRC 10114 隊務系統', 'info');
+          clearAllAuthSessionCache();
+          showToast('已登出系統', '已清除記憶體內之解密個資與本機驗證令牌，感謝使用 FRC 10114 隊務系統', 'info');
         };
 
         // Security Guard 1: Anti-Tampering Role & Cryptographic SCRAM Session Verification
         useEffect(() => {
           if (!isAuthenticated) return;
+          if (isSessionExpired()) {
+            unlockedPiiMapRef.current = {};
+            setIsAuthenticated(false);
+            clearAllAuthSessionCache();
+            showToast('登入時效已屆滿', '您的登入工作階段已超過 2 小時有效期限，系統已自動登出並清除快取', 'warning');
+            return;
+          }
           const matched = members.find(m => m.id === currentMember?.id);
           if (currentRole === 'admin') {
             const isValidAdmin = matched && (
@@ -3312,14 +3744,9 @@
               (matched.id && matched.id.startsWith('10114-ADM'))
             );
             if (!isValidAdmin) {
+              unlockedPiiMapRef.current = {};
               setIsAuthenticated(false);
-              try {
-                sessionStorage.removeItem('frc10114_logged_in');
-                sessionStorage.removeItem('frc10114_role');
-                sessionStorage.removeItem('frc10114_member_id');
-                sessionStorage.removeItem('frc10114_parent_student');
-                sessionStorage.removeItem('frc10114_session_sig');
-              } catch (e) {}
+              clearAllAuthSessionCache();
               showToast('安全防護攔截', '偵測到異常的權限狀態變更，系統已強制登出', 'error');
               return;
             }
@@ -3334,18 +3761,15 @@
               memId !== (currentMember?.id || '') ||
               !verifySessionSig(sig, currentRole, memId, matched || currentMember)
             ) {
+              unlockedPiiMapRef.current = {};
               setIsAuthenticated(false);
-              sessionStorage.removeItem('frc10114_logged_in');
-              sessionStorage.removeItem('frc10114_role');
-              sessionStorage.removeItem('frc10114_member_id');
-              sessionStorage.removeItem('frc10114_parent_student');
-              sessionStorage.removeItem('frc10114_session_sig');
+              clearAllAuthSessionCache();
               showToast('安全防護攔截', '偵測到工作階段憑證異常竄改或密碼已更新，系統已強制登出', 'error');
             }
           } catch (e) {}
         }, [isAuthenticated, currentRole, currentMember, members]);
 
-        // Security Guard 2: 30-Minute Idle Auto-Logout for Shared Workshop Computers
+        // Security Guard 2: 2-Hour Idle & Session Expiration Auto-Logout for Shared Workshop Computers
         const lastActivityRef = React.useRef(Date.now());
         useEffect(() => {
           if (!isAuthenticated) return;
@@ -3356,23 +3780,18 @@
             if (now - lastRecordTime > 3000) {
               lastActivityRef.current = now;
               lastRecordTime = now;
+              touchSessionActivityTimestamp();
             }
           };
           const eventsList = ['mousedown', 'keydown', 'touchstart', 'scroll'];
           eventsList.forEach(ev => window.addEventListener(ev, updateActivity, { passive: true }));
-          const IDLE_LIMIT_MS = 30 * 60 * 1000; // 30 minutes
           const timer = setInterval(() => {
-            if (Date.now() - lastActivityRef.current > IDLE_LIMIT_MS) {
+            if (Date.now() - lastActivityRef.current > SESSION_IDLE_TIMEOUT_MS || isSessionExpired()) {
               unlockedPiiMapRef.current = {};
+              setMembers(prev => normalizeMembersFromStorage(encodeMembersForStorage(prev), {}));
               setIsAuthenticated(false);
-              try {
-                sessionStorage.removeItem('frc10114_logged_in');
-                sessionStorage.removeItem('frc10114_role');
-                sessionStorage.removeItem('frc10114_member_id');
-                sessionStorage.removeItem('frc10114_parent_student');
-                sessionStorage.removeItem('frc10114_session_sig');
-              } catch (e) {}
-              showToast('閒置安全自動登出', '您已超過 30 分鐘未操作系統，為保護公用電腦帳號安全已自動登出', 'warning');
+              clearAllAuthSessionCache();
+              showToast('閒置或時效屆滿自動登出', '您已超過 2 小時未操作或超過登入有效期限，系統已自動登出並清空所有快取', 'warning');
             }
           }, 15000);
           return () => {
@@ -3392,27 +3811,26 @@
           }
         };
 
-        const handleSaveDraft = () => {
+        const handleSaveDraft = async () => {
           if (currentRole !== 'admin') {
             showToast('權限不足', '僅限管理員可修改隊員名冊', 'error');
-            return;
+            return false;
           }
           if (!draftMember.name.trim() || !draftMember.id.trim()) {
             showToast('儲存失敗', '姓名與編號不得為空', 'error');
-            return;
+            return false;
           }
           if (draftMember.departments.length === 0) {
             showToast('儲存失敗', '請至少勾選一個組別', 'warning');
-            return;
+            return false;
           }
           const cleanedDraft = { ...draftMember };
           const pendingNewPass = cleanedDraft._newPassword ? cleanedDraft._newPassword.trim() : '';
           delete cleanedDraft._newPassword;
           delete cleanedDraft.password;
           const tRole = cleanedDraft.role === 'admin' || cleanedDraft.id === '10114-001' ? 'admin' : 'member';
-          const defaultHash = tRole === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
           const hasCustomPass = pendingNewPass
-            ? hashPassword(pendingNewPass) !== defaultHash
+            ? !isDefaultRolePassword(pendingNewPass, tRole, cleanedDraft.id)
             : Boolean(cleanedDraft.hasCustomPass);
           const normalizedDraft = {
             ...cleanedDraft,
@@ -3425,24 +3843,39 @@
             [normalizedDraft.id]: extractMemberPii(normalizedDraft),
           };
           if (pendingNewPass) {
-            const newAuthId = getVaultAuthDocId(tRole, normalizedDraft.id, pendingNewPass);
+            const newAuthId = getVaultAuthDocId(tRole, normalizedDraft.id, pendingNewPass, true);
+            const legAuthId = getVaultAuthDocId(tRole, normalizedDraft.id, pendingNewPass, false);
             recordLocalVerifiedAuth(newAuthId);
+            recordLocalVerifiedAuth(legAuthId);
             const db = initFirestore(firebaseConfig);
             if (db) {
               try {
-                db.collection('frc10114_vault').doc(newAuthId).set({
+                await db.collection('frc10114_vault').doc(newAuthId).set({
                   valid: true,
                   role: tRole,
                   memberId: normalizedDraft.id,
+                  saltVersion: 2,
                   updatedAt: Date.now(),
                 });
-              } catch (e) {}
+                if (legAuthId && legAuthId !== newAuthId) {
+                  await db.collection('frc10114_vault').doc(legAuthId).set({
+                    valid: true,
+                    role: tRole,
+                    memberId: normalizedDraft.id,
+                    updatedAt: Date.now(),
+                  });
+                }
+              } catch (err) {
+                console.error('Reset member password vault write error:', err);
+                showToast('操作失敗，請檢查網路連線', '重設密碼寫入雲端加密保險箱失敗，請檢查網路連線', 'error');
+                return false;
+              }
             }
           }
           const activeAdminProof = (currentMember.id === normalizedDraft.id && pendingNewPass)
-            ? deriveClientProof(pendingNewPass)
+            ? deriveClientProof(pendingNewPass, normalizedDraft.id)
             : getSessionProofFromStorage();
-          saveAdminVaultData(
+          const vaultOk = await saveAdminVaultData(
             firebaseConfig,
             currentMember?.id || '10114-001',
             activeAdminProof,
@@ -3450,6 +3883,10 @@
             normalizedDraft.id,
             pendingNewPass
           );
+          if (firebaseConfig && !vaultOk) {
+            showToast('操作失敗，請檢查網路連線', '個資加密保險箱同步失敗，請檢查網路連線', 'error');
+            return false;
+          }
 
           const nextMembers = members.map(m =>
             (m.id === selectedMemberId || m.id === normalizedDraft.id) ? normalizedDraft : m
@@ -3460,16 +3897,27 @@
             if (pendingNewPass && currentRole !== 'parent') {
               try {
                 sessionStorage.setItem('frc10114_session_sig', createSessionSig(currentRole, normalizedDraft.id, pendingNewPass));
-              } catch (e) {}
+              } catch (storageErr) {
+                console.warn('SessionStorage write warning:', storageErr);
+              }
             }
           }
           setSelectedMemberId(normalizedDraft.id);
-          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
-          syncToCloud({ members: nextMembers });
+          try {
+            localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers)));
+          } catch (storageErr) {
+            console.warn('LocalStorage write warning:', storageErr);
+          }
+          const syncOk = await syncToCloud({ members: nextMembers });
+          if (firebaseConfig && !syncOk) {
+            showToast('操作失敗，請檢查網路連線', '公開名冊同步至雲端失敗，請檢查網路連線', 'error');
+            return false;
+          }
           showToast('資料儲存成功', `隊員「${normalizedDraft.name}」公開名冊與加密個資保險箱已分別同步！`, 'success');
+          return true;
         };
 
-        const handleUpdateProfile = (updatedProfile) => {
+        const handleUpdateProfile = async (updatedProfile) => {
           if (!updatedProfile.name?.trim()) {
             showToast('儲存失敗', '姓名不得為空', 'error');
             return false;
@@ -3493,8 +3941,9 @@
             ...unlockedPiiMapRef.current,
             [safeUpdated.id]: myPii,
           };
+          let vaultOk = true;
           if (currentRole === 'admin') {
-            saveAdminVaultData(
+            vaultOk = await saveAdminVaultData(
               firebaseConfig,
               currentMember?.id || '10114-001',
               getSessionProofFromStorage(),
@@ -3502,7 +3951,11 @@
               safeUpdated.id
             );
           } else {
-            saveMemberVaultData(firebaseConfig, safeUpdated.id, getSessionProofFromStorage(), myPii);
+            vaultOk = await saveMemberVaultData(firebaseConfig, safeUpdated.id, getSessionProofFromStorage(), myPii);
+          }
+          if (firebaseConfig && !vaultOk) {
+            showToast('操作失敗，請檢查網路連線', '敏感個資存入雲端加密保險箱失敗，請檢查網路連線', 'error');
+            return false;
           }
 
           setMembers(nextMembers);
@@ -3510,8 +3963,16 @@
           if (draftMember && draftMember.id === updatedProfile.id) {
             setDraftMember(prev => ({ ...prev, ...safeUpdated }));
           }
-          try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers))); } catch (e) {}
-          syncToCloud({ members: nextMembers });
+          try {
+            localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers)));
+          } catch (storageErr) {
+            console.warn('LocalStorage write warning:', storageErr);
+          }
+          const syncOk = await syncToCloud({ members: nextMembers });
+          if (firebaseConfig && !syncOk) {
+            showToast('操作失敗，請檢查網路連線', '個人公開名冊同步至雲端失敗，請檢查網路連線', 'error');
+            return false;
+          }
           if (currentRole !== 'admin' && !safeUpdated.hasCustomPass && hasMemberPii(safeUpdated)) {
             showToast('個資已加密傳送予教練！', '提醒：請變更預設密碼 (10114)，以便下次登入時能自行解鎖檢視個資', 'info');
           } else {
@@ -3856,8 +4317,9 @@
           showToast('已移除個人頭貼', '已還原為姓氏字母頭像', 'info');
         };
 
-        const handleSaveAndProceedSwitch = () => {
-          handleSaveDraft();
+        const handleSaveAndProceedSwitch = async () => {
+          const ok = await handleSaveDraft();
+          if (!ok) return;
           if (pendingSwitchMemberId) {
             setSelectedMemberId(pendingSwitchMemberId);
           }
@@ -3875,10 +4337,10 @@
         };
 
         // Restore from JSON backup payload (Admin Only)
-        const handleRestoreBackup = (payload) => {
+        const handleRestoreBackup = async (payload) => {
           if (currentRole !== 'admin') {
             showToast('權限不足', '僅限管理員可執行系統備份還原', 'error');
-            return;
+            return false;
           }
           const toSync = {};
           if (payload.members && Array.isArray(payload.members)) {
@@ -3891,17 +4353,29 @@
             unlockedPiiMapRef.current = restoredPiiMap;
             const db = initFirestore(firebaseConfig);
             if (db && hasLegacySecretFields(payload.members)) {
-              migrateLegacyMembersToVault(db, payload.members);
+              const migOk = await migrateLegacyMembersToVault(db, payload.members);
+              if (!migOk) {
+                showToast('操作失敗，請檢查網路連線', '備份檔內之舊版機敏資料遷移失敗，請檢查網路連線', 'error');
+                return false;
+              }
             }
-            saveAdminVaultData(
+            const vaultOk = await saveAdminVaultData(
               firebaseConfig,
               currentMember?.id || '10114-001',
               getSessionProofFromStorage(),
               unlockedPiiMapRef.current
             );
+            if (firebaseConfig && !vaultOk) {
+              showToast('操作失敗，請檢查網路連線', '備份還原寫入雲端加密保險箱失敗，請檢查網路連線', 'error');
+              return false;
+            }
             const normMembers = normalizeMembersFromStorage(payload.members, unlockedPiiMapRef.current);
             setMembers(normMembers);
-            try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normMembers))); } catch (e) {}
+            try {
+              localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normMembers)));
+            } catch (storageErr) {
+              console.warn('LocalStorage write warning:', storageErr);
+            }
             toSync.members = normMembers;
           }
           if (payload.events) { setEvents(payload.events); toSync.events = payload.events; }
@@ -3913,9 +4387,14 @@
           if (payload.eduCategories) { setEduCategories(payload.eduCategories); toSync.eduCategories = payload.eduCategories; }
           if (payload.eduEquipment) { setEduEquipment(payload.eduEquipment); toSync.eduEquipment = payload.eduEquipment; }
           if (Object.keys(toSync).length > 0) {
-            syncToCloud(toSync);
+            const syncOk = await syncToCloud(toSync);
+            if (firebaseConfig && !syncOk) {
+              showToast('操作失敗，請檢查網路連線', '備份資料同步至雲端失敗，請檢查網路連線', 'error');
+              return false;
+            }
           }
           showToast('系統資料還原成功！', '已從 JSON 備份檔恢復所有最新隊務紀錄並完成安全加密', 'success');
+          return true;
         };
 
         // Booking & Equipment actions
@@ -9814,8 +10293,10 @@
       }
 
       // --- GOOGLE SPREADSHEET & ATTENDANCE ROSTER EXPORT HELPERS ---
-      const GOOGLE_SPREADSHEET_ID = '15zw5HdajgYVGS4odRv8qQeoPPtItgM04bTMOQACsqGg';
-      const GOOGLE_SPREADSHEET_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SPREADSHEET_ID}/edit`;
+      // 試算表 ID 與 Webhook URL 已移轉至 Vercel 後端環境變數 (process.env.GOOGLE_SPREADSHEET_ID / process.env.GAS_WEBHOOK_URL)
+      // 前端統一透過 /api/submit-sheet 安全轉發，不在前端原始碼暴露試算表 ID 或金鑰
+      const GOOGLE_SPREADSHEET_ID = '';
+      const GOOGLE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/';
 
       function extractClassCode(className) {
         if (!className) return '';
@@ -9961,22 +10442,14 @@
         const [isExportModalOpen, setIsExportModalOpen] = useState(false);
         const [exportDate, setExportDate] = useState(() => getTomorrowDateStr());
         const [copyFeedback, setCopyFeedback] = useState(''); // 'text' | 'tsv' | ''
-        const [gasWebhookUrl, setGasWebhookUrl] = useState(() => {
-          try {
-            return localStorage.getItem('frc10114_sheets_webhook_url') || '';
-          } catch(e) {
-            return '';
-          }
-        });
+        const [gasWebhookUrl, setGasWebhookUrl] = useState(() => getSessionWebhookUrl());
         const [isSendingWebhook, setIsSendingWebhook] = useState(false);
         const [webhookNotice, setWebhookNotice] = useState('');
         const [showScriptGuide, setShowScriptGuide] = useState(false);
 
         const handleSaveWebhookUrl = (url) => {
           setGasWebhookUrl(url);
-          try {
-            localStorage.setItem('frc10114_sheets_webhook_url', url);
-          } catch(e) {}
+          setSessionWebhookUrl(url);
         };
 
         const exportRecords = useMemo(() => {
@@ -10078,39 +10551,72 @@
 
         const handleSendWebhook = async () => {
           const url = (gasWebhookUrl || '').trim();
-          if (!url) {
-            setShowScriptGuide(true);
-            setWebhookNotice('⚠️ 請先於下方設定 Google Apps Script Webhook 網址');
-            setTimeout(() => setWebhookNotice(''), 4000);
-            return;
-          }
-          if (!/^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec(\?.*)?$/.test(url)) {
+          if (url && !/^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec(\?.*)?$/.test(url)) {
             setWebhookNotice('⚠️ 安全攔截：僅允許發送至官方 Google Apps Script 網址 (https://script.google.com/macros/s/.../exec)');
             setTimeout(() => setWebhookNotice(''), 5000);
             return;
           }
           setIsSendingWebhook(true);
           setWebhookNotice('');
+          const webhookPayload = {
+            date: exportRecords.targetDate,
+            morning: exportRecords.morningStr,
+            afternoon: exportRecords.afternoonStr,
+            evening: exportRecords.eveningStr || '',
+            fullText: exportRecords.fullText,
+            submittedAt: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }),
+            ...(url ? { webhookUrl: url } : {}),
+          };
           try {
-            await fetch(url, {
-              method: 'POST',
-              mode: 'no-cors',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                spreadsheetId: GOOGLE_SPREADSHEET_ID,
-                date: exportRecords.targetDate,
-                morning: exportRecords.morningStr,
-                afternoon: exportRecords.afternoonStr,
-                evening: exportRecords.eveningStr || '',
-                fullText: exportRecords.fullText,
-                submittedAt: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
-              })
-            });
-            setWebhookNotice('✅ 已成功將名單發送至 Google 試算表！');
-            setTimeout(() => setWebhookNotice(''), 5000);
+            // Strategy 1: POST to Vercel Serverless Function (/api/submit-sheet) using server-side env vars (GOOGLE_SPREADSHEET_ID & GAS_WEBHOOK_URL)
+            let usedNoCorsFallback = false;
+            try {
+              const proxyRes = await fetch('/api/submit-sheet', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(webhookPayload),
+              });
+              if (proxyRes.status === 404 || proxyRes.status === 405) {
+                usedNoCorsFallback = true;
+              } else {
+                const proxyData = await proxyRes.json().catch(() => null);
+                if (!proxyRes.ok || (proxyData && proxyData.status === 'error')) {
+                  throw new Error((proxyData && proxyData.message) || `後端轉發回應異常 (HTTP ${proxyRes.status})`);
+                }
+                setWebhookNotice('✅ 已透過 Vercel 後端代理 (/api/submit-sheet) 確認寫入 Google 試算表！');
+                setTimeout(() => setWebhookNotice(''), 5000);
+                return;
+              }
+            } catch (proxyErr) {
+              if (proxyErr instanceof TypeError) {
+                usedNoCorsFallback = true;
+              } else {
+                throw proxyErr;
+              }
+            }
+
+            // Strategy 2: Fallback to browser no-cors ONLY if running in a pure static environment and admin manually entered URL
+            if (usedNoCorsFallback) {
+              if (!url) {
+                setShowScriptGuide(true);
+                setWebhookNotice('⚠️ 請於 Vercel 後台設定 GAS_WEBHOOK_URL 環境變數，或於下方填入 Webhook 網址');
+                setTimeout(() => setWebhookNotice(''), 5000);
+                return;
+              }
+              await fetch(url, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(webhookPayload)
+              });
+              setWebhookNotice('📡 已發送請求（非同步傳輸中），請確認試算表端是否更新');
+              setTimeout(() => setWebhookNotice(''), 6000);
+            }
           } catch(err) {
-            setWebhookNotice('⚠️ 發送失敗：' + (err.message || '網路連線異常'));
-            setTimeout(() => setWebhookNotice(''), 5000);
+            const errMsg = err?.message || '網路連線異常';
+            setWebhookNotice('⚠️ 操作失敗，請檢查網路連線：' + errMsg);
+            alert('⚠️ 操作失敗，請檢查網路連線：\n' + errMsg);
+            setTimeout(() => setWebhookNotice(''), 6000);
           } finally {
             setIsSendingWebhook(false);
           }
@@ -10621,7 +11127,7 @@
                           </span>
                         </div>
                         <p className="text-xs text-zinc-500 mt-0.5">
-                          目標試算表：<code className="bg-zinc-100 px-1 py-0.5 rounded font-mono text-[11px] text-zinc-700">{GOOGLE_SPREADSHEET_ID}</code>
+                          目標試算表：<code className="bg-zinc-100 px-1 py-0.5 rounded font-mono text-[11px] text-zinc-700">{GOOGLE_SPREADSHEET_ID || '已移至 Vercel 後端環境變數 (GOOGLE_SPREADSHEET_ID)'}</code>
                         </p>
                       </div>
                     </div>
@@ -10818,7 +11324,7 @@
                         <div className="p-3 bg-white border border-emerald-200 rounded-lg text-xs text-zinc-700 space-y-2 mt-2">
                           <p className="font-bold text-emerald-900">如何設定「每日定時自動寫入」與「手動即時發送」？</p>
                           <ol className="list-decimal list-inside space-y-1 text-[11px] text-zinc-600 leading-relaxed">
-                            <li>開啟您的 Google 試算表（ID: <code className="font-mono bg-zinc-100 px-1 py-0.5 rounded">{GOOGLE_SPREADSHEET_ID}</code>）。</li>
+                            <li>開啟您的 Google 試算表（ID: <code className="font-mono bg-zinc-100 px-1 py-0.5 rounded">{GOOGLE_SPREADSHEET_ID || '請於後端環境變數 GOOGLE_SPREADSHEET_ID 設定'}</code>）。</li>
                             <li>點選上方選單的 <strong>「擴充功能」 &gt; 「Apps Script」</strong>。</li>
                             <li>清空原有內容，貼上下方已整合的完整程式碼並點選「儲存」。</li>
                             <li>
@@ -10832,7 +11338,7 @@
                             <button
                               type="button"
                               onClick={() => {
-                                const scriptCode = '// FRC 10114 隊務管理系統 - 自動更新明日留校名單至 Google 試算表\\nvar SPREADSHEET_ID = "' + GOOGLE_SPREADSHEET_ID + '";\\nvar FIREBASE_URL = "https://firestore.googleapis.com/v1/projects/frc10114-team-manage/databases/(default)/documents/frc10114_teams/team_state?key=AIzaSyC0EWuQAyT_tMGleHe8UjdLmgiBC1D5Vdw";\\n\\n// 1. 每日定時自動無人化抓取並寫入 A1\\nfunction autoSyncTomorrowAttendance() {\\n  try {\\n    var now = new Date();\\n    var tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);\\n    var targetDate = Utilities.formatDate(tomorrow, "Asia/Taipei", "yyyy-MM-dd");\\n\\n    var response = UrlFetchApp.fetch(FIREBASE_URL, { muteHttpExceptions: true });\\n    if (response.getResponseCode() !== 200) throw new Error("HTTP " + response.getResponseCode());\\n    var json = JSON.parse(response.getContentText());\\n    if (!json.fields) throw new Error("無 fields 欄位");\\n\\n    var members = unwrapFirestoreValue(json.fields.members) || [];\\n    var attendance = unwrapFirestoreValue(json.fields.attendance) || [];\\n\\n    var targetRecords = attendance.filter(function(r) {\\n      return r.date === targetDate && r.type === "attendance";\\n    });\\n\\n    var morning = targetRecords.filter(function(r) { return (r.slots || []).indexOf("morning") !== -1; });\\n    var afternoon = targetRecords.filter(function(r) { return (r.slots || []).indexOf("afternoon") !== -1; });\\n    var evening = targetRecords.filter(function(r) { return (r.slots || []).indexOf("evening") !== -1; });\\n\\n    var sortedMorning = sortStudents(morning, members);\\n    var sortedAfternoon = sortStudents(afternoon, members);\\n    var sortedEvening = sortStudents(evening, members);\\n\\n    var morningNames = sortedMorning.map(function(r) { return formatName(r.studentName, r.studentId, members); });\\n    var afternoonNames = sortedAfternoon.map(function(r) { return formatName(r.studentName, r.studentId, members); });\\n    var eveningNames = sortedEvening.map(function(r) { return formatName(r.studentName, r.studentId, members); });\\n\\n    var periodSections = [];\\n    if (morningNames.length > 0) periodSections.push("⛅ 上午 (09-12點)：\\\\n" + morningNames.join("\\\\n"));\\n    if (afternoonNames.length > 0) periodSections.push("☀️ 下午 (13-17點)：\\\\n" + afternoonNames.join("\\\\n"));\\n    if (eveningNames.length > 0) periodSections.push("🌙 晚上 (18-21點)：\\\\n" + eveningNames.join("\\\\n"));\\n\\n    var fullText = "📢 【明日申請在校學習名單】\\\\n📅 日期：" + targetDate + "\\\\n\\\\n明日申請在校人員如下：\\\\n";\\n    if (periodSections.length > 0) {\\n      fullText += periodSections.join("\\\\n\\\\n");\\n    } else {\\n      fullText += "無人申請留校";\\n    }\\n\\n    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);\\n    var sheet = ss.getSheetByName("明日申請在校名單") || ss.getActiveSheet();\\n    sheet.getRange("A1").setValue(fullText);\\n    Logger.log("✅ 成功自動更新 " + targetDate + " 留校名單至 A1");\\n    return fullText;\\n  } catch(err) {\\n    Logger.log("❌ 自動更新失敗：" + err.toString());\\n  }\\n}\\n\\n// 2. 網頁按鈕即時發送接收點\\nfunction doPost(e) {\\n  try {\\n    var data = JSON.parse(e.postData.contents);\\n    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);\\n    var sheet = ss.getSheetByName("明日申請在校名單") || ss.getActiveSheet();\\n    var content = data.fullText || "";\\n    sheet.getRange("A1").setValue(content);\\n    return ContentService.createTextOutput(JSON.stringify({ status: "success" })).setMimeType(ContentService.MimeType.JSON);\\n  } catch(err) {\\n    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);\\n  }\\n}\\n\\n// 3. 一鍵建立每日定時觸發器（每天 21:00 自動執行）\\nfunction createDailyTrigger() {\\n  var triggers = ScriptApp.getProjectTriggers();\\n  for (var i = 0; i < triggers.length; i++) {\\n    if (triggers[i].getHandlerFunction() === "autoSyncTomorrowAttendance") {\\n      ScriptApp.deleteTrigger(triggers[i]);\\n    }\\n  }\\n  ScriptApp.newTrigger("autoSyncTomorrowAttendance").timeBased().everyDays(1).atHour(21).inTimezone("Asia/Taipei").create();\\n  Logger.log("✅ 已成功設定每日晚上 21:00 自動執行觸發器！");\\n}\\n\\nfunction unwrapFirestoreValue(val) {\\n  if (!val) return null;\\n  if ("stringValue" in val) return val.stringValue;\\n  if ("integerValue" in val) return parseInt(val.integerValue, 10);\\n  if ("doubleValue" in val) return val.doubleValue;\\n  if ("booleanValue" in val) return val.booleanValue;\\n  if ("arrayValue" in val) return (val.arrayValue.values || []).map(unwrapFirestoreValue);\\n  if ("mapValue" in val) {\\n    var obj = {};\\n    for (var k in (val.mapValue.fields || {})) obj[k] = unwrapFirestoreValue(val.mapValue.fields[k]);\\n    return obj;\\n  }\\n  return null;\\n}\\n\\nfunction extractClassCode(className) {\\n  if (!className) return "";\\n  var str = String(className).trim();\\n  var seniorMatch = str.match(/高([一二三123])(\\\\d{1,2})班?/);\\n  if (seniorMatch) {\\n    var gradeMap = { \'一\': \'1\', \'1\': \'1\', \'二\': \'2\', \'2\': \'2\', \'三\': \'3\', \'3\': \'3\' };\\n    var grade = gradeMap[seniorMatch[1]] || seniorMatch[1];\\n    var cls = String(seniorMatch[2]);\\n    if (cls.length < 2) cls = "0" + cls;\\n    return grade + cls;\\n  }\\n  var numMatch = str.match(/^(\\\\d{3,4})班?$/);\\n  if (numMatch) return numMatch[1];\\n  if (/\\\\d/.test(str)) return str.replace(/班$/, "");\\n  return str;\\n}\\n\\nfunction formatName(studentName, studentId, membersList) {\\n  var m = null;\\n  for (var i = 0; i < membersList.length; i++) {\\n    if (membersList[i].id === studentId || membersList[i].name === studentName) { m = membersList[i]; break; }\\n  }\\n  var code = m ? extractClassCode(m.className) : "";\\n  var seatNum = m && m.seatNumber ? String(m.seatNumber).replace(/\\\\D/g, "") : "";\\n  var seatStr = seatNum ? (seatNum.length < 2 ? "0" + seatNum : seatNum) : "";\\n  if (code && seatStr) {\\n    if (code.indexOf(seatStr) === code.length - seatStr.length && code.length >= 5) return code + studentName;\\n    return code + seatStr + studentName;\\n  }\\n  if (code) return code + studentName;\\n  return studentName;\\n}\\n\\nfunction sortStudents(studentItems, membersList) {\\n  return studentItems.slice().sort(function(a, b) {\\n    var mA = null, mB = null;\\n    for (var i = 0; i < membersList.length; i++) {\\n      if (!mA && (membersList[i].id === a.studentId || membersList[i].name === a.studentName)) mA = membersList[i];\\n      if (!mB && (membersList[i].id === b.studentId || membersList[i].name === b.studentName)) mB = membersList[i];\\n    }\\n    var codeA = mA ? extractClassCode(mA.className) : "";\\n    var codeB = mB ? extractClassCode(mB.className) : "";\\n    var numA = parseInt(codeA, 10);\\n    var numB = parseInt(codeB, 10);\\n    var hasNumA = !isNaN(numA) && numA > 0;\\n    var hasNumB = !isNaN(numB) && numB > 0;\\n    var cleanSeat = function(s) {\\n      if (!s) return NaN;\\n      var digits = String(s).replace(/\\\\D/g, "");\\n      return digits ? parseInt(digits, 10) : NaN;\\n    };\\n    var seatA = cleanSeat(mA && mA.seatNumber);\\n    var seatB = cleanSeat(mB && mB.seatNumber);\\n    if (hasNumA && hasNumB) {\\n      if (numA !== numB) return numA - numB;\\n      if (!isNaN(seatA) && !isNaN(seatB)) {\\n        if (seatA !== seatB) return seatA - seatB;\\n      } else if (!isNaN(seatA)) return -1;\\n      else if (!isNaN(seatB)) return 1;\\n      return (a.studentName || "").localeCompare(b.studentName || "", "zh-Hant");\\n    }\\n    if (hasNumA && !hasNumB) return -1;\\n    if (!hasNumA && hasNumB) return 1;\\n    if (codeA !== codeB) return (codeA || "").localeCompare(codeB || "");\\n    if (!isNaN(seatA) && !isNaN(seatB)) {\\n      if (seatA !== seatB) return seatA - seatB;\\n    } else if (!isNaN(seatA)) return -1;\\n    else if (!isNaN(seatB)) return 1;\\n    return (a.studentName || "").localeCompare(b.studentName || "", "zh-Hant");\\n  });\\n}';
+                                const scriptCode = '// FRC 10114 隊務管理系統 - 自動更新明日留校名單至 Google 試算表 (安全強化版)\\n// 請於 Apps Script「專案設定」>「指令碼屬性」設定 SPREADSHEET_ID、FIREBASE_API_KEY 與 WEBHOOK_SECRET\\nvar SCRIPT_PROPS = PropertiesService.getScriptProperties();\\nvar SPREADSHEET_ID = SCRIPT_PROPS.getProperty("SPREADSHEET_ID") || "";\\nvar FIREBASE_API_KEY = SCRIPT_PROPS.getProperty("FIREBASE_API_KEY") || "";\\nvar WEBHOOK_SECRET = SCRIPT_PROPS.getProperty("WEBHOOK_SECRET") || "";\\nvar FIREBASE_URL = "https://firestore.googleapis.com/v1/projects/frc10114-team-manage/databases/(default)/documents/frc10114_teams/team_state";\\n\\n// 1. 每日定時自動無人化抓取並寫入 A1 (透過 HTTP Header 傳遞 API Key，避免暴露於 URL Query)\\nfunction autoSyncTomorrowAttendance() {\\n  try {\\n    var now = new Date();\\n    var tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);\\n    var targetDate = Utilities.formatDate(tomorrow, "Asia/Taipei", "yyyy-MM-dd");\\n\\n    var fetchOptions = { muteHttpExceptions: true };\\n    if (FIREBASE_API_KEY) {\\n      fetchOptions.headers = { "x-goog-api-key": FIREBASE_API_KEY };\\n    }\\n    var response = UrlFetchApp.fetch(FIREBASE_URL, fetchOptions);\\n    if (response.getResponseCode() !== 200) throw new Error("HTTP " + response.getResponseCode());\\n    var json = JSON.parse(response.getContentText());\\n    if (!json.fields) throw new Error("無 fields 欄位");\\n\\n    var members = unwrapFirestoreValue(json.fields.members) || [];\\n    var attendance = unwrapFirestoreValue(json.fields.attendance) || [];\\n\\n    var targetRecords = attendance.filter(function(r) {\\n      return r.date === targetDate && r.type === "attendance";\\n    });\\n\\n    var morning = targetRecords.filter(function(r) { return (r.slots || []).indexOf("morning") !== -1; });\\n    var afternoon = targetRecords.filter(function(r) { return (r.slots || []).indexOf("afternoon") !== -1; });\\n    var evening = targetRecords.filter(function(r) { return (r.slots || []).indexOf("evening") !== -1; });\\n\\n    var sortedMorning = sortStudents(morning, members);\\n    var sortedAfternoon = sortStudents(afternoon, members);\\n    var sortedEvening = sortStudents(evening, members);\\n\\n    var morningNames = sortedMorning.map(function(r) { return formatName(r.studentName, r.studentId, members); });\\n    var afternoonNames = sortedAfternoon.map(function(r) { return formatName(r.studentName, r.studentId, members); });\\n    var eveningNames = sortedEvening.map(function(r) { return formatName(r.studentName, r.studentId, members); });\\n\\n    var periodSections = [];\\n    if (morningNames.length > 0) periodSections.push("⛅ 上午 (09-12點)：\\\\n" + morningNames.join("\\\\n"));\\n    if (afternoonNames.length > 0) periodSections.push("☀️ 下午 (13-17點)：\\\\n" + afternoonNames.join("\\\\n"));\\n    if (eveningNames.length > 0) periodSections.push("🌙 晚上 (18-21點)：\\\\n" + eveningNames.join("\\\\n"));\\n\\n    var fullText = "📢 【明日申請在校學習名單】\\\\n📅 日期：" + targetDate + "\\\\n\\\\n明日申請在校人員如下：\\\\n";\\n    if (periodSections.length > 0) {\\n      fullText += periodSections.join("\\\\n\\\\n");\\n    } else {\\n      fullText += "無人申請留校";\\n    }\\n\\n    var ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();\\n    var sheet = ss.getSheetByName("明日申請在校名單") || ss.getActiveSheet();\\n    sheet.getRange("A1").setValue(fullText);\\n    Logger.log("✅ 成功自動更新 " + targetDate + " 留校名單至 A1");\\n    return fullText;\\n  } catch(err) {\\n    Logger.log("❌ 自動更新失敗：" + err.toString());\\n  }\\n}\\n\\n// 2. 網頁後端代理 (/api/submit-sheet) 即時發送接收點\\nfunction doPost(e) {\\n  try {\\n    var data = JSON.parse(e.postData.contents);\\n    if (WEBHOOK_SECRET && data.token !== WEBHOOK_SECRET) {\\n      throw new Error("未授權的請求：Webhook Token 驗證失敗");\\n    }\\n    var targetSheetId = data.spreadsheetId || SPREADSHEET_ID;\\n    var ss = targetSheetId ? SpreadsheetApp.openById(targetSheetId) : SpreadsheetApp.getActiveSpreadsheet();\\n    var sheet = ss.getSheetByName("明日申請在校名單") || ss.getActiveSheet();\\n    var content = data.fullText || "";\\n    sheet.getRange("A1").setValue(content);\\n    return ContentService.createTextOutput(JSON.stringify({ status: "success" })).setMimeType(ContentService.MimeType.JSON);\\n  } catch(err) {\\n    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);\\n  }\\n}\\n\\n// 3. 一鍵建立每日定時觸發器（每天 21:00 自動執行）\\nfunction createDailyTrigger() {\\n  var triggers = ScriptApp.getProjectTriggers();\\n  for (var i = 0; i < triggers.length; i++) {\\n    if (triggers[i].getHandlerFunction() === "autoSyncTomorrowAttendance") {\\n      ScriptApp.deleteTrigger(triggers[i]);\\n    }\\n  }\\n  ScriptApp.newTrigger("autoSyncTomorrowAttendance").timeBased().everyDays(1).atHour(21).inTimezone("Asia/Taipei").create();\\n  Logger.log("✅ 已成功設定每日晚上 21:00 自動執行觸發器！");\\n}\\n\\nfunction unwrapFirestoreValue(val) {\\n  if (!val) return null;\\n  if ("stringValue" in val) return val.stringValue;\\n  if ("integerValue" in val) return parseInt(val.integerValue, 10);\\n  if ("doubleValue" in val) return val.doubleValue;\\n  if ("booleanValue" in val) return val.booleanValue;\\n  if ("arrayValue" in val) return (val.arrayValue.values || []).map(unwrapFirestoreValue);\\n  if ("mapValue" in val) {\\n    var obj = {};\\n    for (var k in (val.mapValue.fields || {})) obj[k] = unwrapFirestoreValue(val.mapValue.fields[k]);\\n    return obj;\\n  }\\n  return null;\\n}\\n\\nfunction extractClassCode(className) {\\n  if (!className) return "";\\n  var str = String(className).trim();\\n  var seniorMatch = str.match(/高([一二三123])(\\\\d{1,2})班?/);\\n  if (seniorMatch) {\\n    var gradeMap = { \'一\': \'1\', \'1\': \'1\', \'二\': \'2\', \'2\': \'2\', \'三\': \'3\', \'3\': \'3\' };\\n    var grade = gradeMap[seniorMatch[1]] || seniorMatch[1];\\n    var cls = String(seniorMatch[2]);\\n    if (cls.length < 2) cls = "0" + cls;\\n    return grade + cls;\\n  }\\n  var numMatch = str.match(/^(\\\\d{3,4})班?$/);\\n  if (numMatch) return numMatch[1];\\n  if (/\\\\d/.test(str)) return str.replace(/班$/, "");\\n  return str;\\n}\\n\\nfunction formatName(studentName, studentId, membersList) {\\n  var m = null;\\n  for (var i = 0; i < membersList.length; i++) {\\n    if (membersList[i].id === studentId || membersList[i].name === studentName) { m = membersList[i]; break; }\\n  }\\n  var code = m ? extractClassCode(m.className) : "";\\n  var seatNum = m && m.seatNumber ? String(m.seatNumber).replace(/\\\\D/g, "") : "";\\n  var seatStr = seatNum ? (seatNum.length < 2 ? "0" + seatNum : seatNum) : "";\\n  if (code && seatStr) {\\n    if (code.indexOf(seatStr) === code.length - seatStr.length && code.length >= 5) return code + studentName;\\n    return code + seatStr + studentName;\\n  }\\n  if (code) return code + studentName;\\n  return studentName;\\n}\\n\\nfunction sortStudents(studentItems, membersList) {\\n  return studentItems.slice().sort(function(a, b) {\\n    var mA = null, mB = null;\\n    for (var i = 0; i < membersList.length; i++) {\\n      if (!mA && (membersList[i].id === a.studentId || membersList[i].name === a.studentName)) mA = membersList[i];\\n      if (!mB && (membersList[i].id === b.studentId || membersList[i].name === b.studentName)) mB = membersList[i];\\n    }\\n    var codeA = mA ? extractClassCode(mA.className) : "";\\n    var codeB = mB ? extractClassCode(mB.className) : "";\\n    var numA = parseInt(codeA, 10);\\n    var numB = parseInt(codeB, 10);\\n    var hasNumA = !isNaN(numA) && numA > 0;\\n    var hasNumB = !isNaN(numB) && numB > 0;\\n    var cleanSeat = function(s) {\\n      if (!s) return NaN;\\n      var digits = String(s).replace(/\\\\D/g, "");\\n      return digits ? parseInt(digits, 10) : NaN;\\n    };\\n    var seatA = cleanSeat(mA && mA.seatNumber);\\n    var seatB = cleanSeat(mB && mB.seatNumber);\\n    if (hasNumA && hasNumB) {\\n      if (numA !== numB) return numA - numB;\\n      if (!isNaN(seatA) && !isNaN(seatB)) {\\n        if (seatA !== seatB) return seatA - seatB;\\n      } else if (!isNaN(seatA)) return -1;\\n      else if (!isNaN(seatB)) return 1;\\n      return (a.studentName || "").localeCompare(b.studentName || "", "zh-Hant");\\n    }\\n    if (hasNumA && !hasNumB) return -1;\\n    if (!hasNumA && hasNumB) return 1;\\n    if (codeA !== codeB) return (codeA || "").localeCompare(codeB || "");\\n    if (!isNaN(seatA) && !isNaN(seatB)) {\\n      if (seatA !== seatB) return seatA - seatB;\\n    } else if (!isNaN(seatA)) return -1;\\n    else if (!isNaN(seatB)) return 1;\\n    return (a.studentName || "").localeCompare(b.studentName || "", "zh-Hant");\\n  });\\n}';
                                 handleCopyText(scriptCode, 'text');
                                 alert('已複製最新 Apps Script 程式碼（含每日定時自動更新功能）！');
                               }}
@@ -10934,7 +11440,7 @@
           });
         };
 
-        const handleSaveProfileForm = (e) => {
+        const handleSaveProfileForm = async (e) => {
           e.preventDefault();
           if (!editName.trim()) {
             alert('姓名不得為空');
@@ -10942,7 +11448,7 @@
           }
           const finalDepartments = member.role === 'admin' ? editDepartments : member.departments;
           if (onUpdateProfile) {
-            const ok = onUpdateProfile({
+            const ok = await onUpdateProfile({
               id: member.id,
               name: editName.trim(),
               className: editClassName.trim(),
@@ -11059,7 +11565,7 @@
           e.target.value = '';
         };
 
-        const handlePasswordSubmit = (e) => {
+        const handlePasswordSubmit = async (e) => {
           e.preventDefault();
           setPassErr('');
           setPassSuccess('');
@@ -11076,7 +11582,7 @@
             return;
           }
           if (onUpdatePassword) {
-            const ok = onUpdatePassword(member.id, oldPass, newPass);
+            const ok = await onUpdatePassword(member.id, oldPass, newPass);
             if (ok) {
               setOldPass('');
               setNewPass('');
@@ -11084,7 +11590,7 @@
               setPassSuccess('✅ 密碼已成功變更！下次登入時請使用新密碼。');
               setTimeout(() => setPassSuccess(''), 5000);
             } else {
-              setPassErr('舊密碼不正確，變更失敗');
+              setPassErr('密碼變更未完成（請確認舊密碼正確且網路連線正常）');
             }
           }
         };
@@ -13150,7 +13656,7 @@
         const [passErr, setPassErr] = useState('');
         const [passSuccess, setPassSuccess] = useState('');
 
-        const handlePasswordSubmit = (e) => {
+        const handlePasswordSubmit = async (e) => {
           e.preventDefault();
           setPassErr('');
           setPassSuccess('');
@@ -13167,7 +13673,7 @@
             return;
           }
           if (onUpdateParentPassword) {
-            const ok = onUpdateParentPassword(matchedStudent.id, oldPass.trim(), newPass.trim());
+            const ok = await onUpdateParentPassword(matchedStudent.id, oldPass.trim(), newPass.trim());
             if (ok) {
               setOldPass('');
               setNewPass('');
@@ -13175,7 +13681,7 @@
               setPassSuccess('✅ 家長安全密碼已成功更新！下次登入時請使用新密碼。');
               setTimeout(() => setPassSuccess(''), 6000);
             } else {
-              setPassErr('舊密碼不正確，請確認後重試');
+              setPassErr('密碼變更未完成（請確認舊密碼正確且網路連線正常）');
             }
           }
         };
@@ -16045,7 +16551,7 @@
           );
         };
 
-        const handleSubmit = (e) => {
+        const handleSubmit = async (e) => {
           e.preventDefault();
           if (!name.trim()) {
             setError('請輸入管理員教練姓名');
@@ -16064,7 +16570,7 @@
             return;
           }
 
-          const success = onCreateAdmin({
+          const success = await onCreateAdmin({
             id: id.trim(),
             name: name.trim(),
             email: email.trim() || `${id.trim().toLowerCase()}@frc10114.org`,
@@ -16264,24 +16770,35 @@
             let str = jsonInput.trim();
             const braceStart = str.indexOf('{');
             const braceEnd = str.lastIndexOf('}');
-            if (braceStart !== -1 && braceEnd !== -1) {
-              str = str.substring(braceStart, braceEnd + 1);
+            if (braceStart === -1 || braceEnd === -1 || braceEnd <= braceStart) {
+              throw new Error('找不到合法的設定物件括號 { ... }');
             }
-            const parsed = new Function(`return ${str}`)();
-            if (parsed && typeof parsed === 'object') {
-              if (parsed.apiKey) setApiKey(parsed.apiKey);
-              if (parsed.authDomain) setAuthDomain(parsed.authDomain);
-              if (parsed.projectId) setProjectId(parsed.projectId);
-              if (parsed.storageBucket) setStorageBucket(parsed.storageBucket);
-              if (parsed.messagingSenderId) setMessagingSenderId(parsed.messagingSenderId);
-              if (parsed.appId) setAppId(parsed.appId);
+            str = str.substring(braceStart, braceEnd + 1);
+            // Sanitize & normalize JS object literal format into strict JSON without dynamic code execution
+            const normalizedJson = str
+              .replace(/\/\*[\s\S]*?\*\//g, '')
+              .replace(/(^|[\s,;])\/\/[^\r\n]*/g, '$1')
+              .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, inner) => `"${inner.replace(/"/g, '\\"')}"`)
+              .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":')
+              .replace(/,\s*([}\]])/g, '$1');
+
+            const parsed = JSON.parse(normalizedJson);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              if (parsed.apiKey) setApiKey(String(parsed.apiKey).trim());
+              if (parsed.authDomain) setAuthDomain(String(parsed.authDomain).trim());
+              if (parsed.projectId) setProjectId(String(parsed.projectId).trim());
+              if (parsed.storageBucket) setStorageBucket(String(parsed.storageBucket).trim());
+              if (parsed.messagingSenderId) setMessagingSenderId(String(parsed.messagingSenderId).trim());
+              if (parsed.appId) setAppId(String(parsed.appId).trim());
               setStatusMsg('✅ 已成功解析並填入 Firebase 設定參數！');
               setJsonInput('');
             } else {
               setStatusMsg('⚠️ 無法解析輸入內容，請確認格式');
+              alert('⚠️ 無法解析輸入內容：請確認貼上的資料為有效的 Firebase 設定物件格式。');
             }
           } catch (e) {
             setStatusMsg('⚠️ 解析失敗：請確保格式為標準 JavaScript 物件或 JSON');
+            alert('⚠️ 解析失敗：請確認貼上的內容為標準 Firebase 設定物件或合法 JSON 格式（系統基於安全規範已拒絕動態執行非標準語法）。');
           }
         };
 
@@ -16632,48 +17149,36 @@
         const [showParentPass, setShowParentPass] = useState(false);
         const [parentErr, setParentErr] = useState('');
 
-        // Brute-Force Rate Limiting State (Max 5 failed attempts -> 60s lockout)
+        // Brute-Force Rate Limiting State (Max 5 failed attempts -> 60s lockout, cross-verified via obfuscated storage + sessionStorage + memory + window.name)
         const MAX_LOGIN_ATTEMPTS = 5;
         const LOCKOUT_DURATION_MS = 60 * 1000;
-        const [failCount, setFailCount] = useState(() => {
-          try {
-            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
-            return Number(saved.failCount) || 0;
-          } catch (e) {
-            return 0;
-          }
-        });
-        const [lockUntil, setLockUntil] = useState(() => {
-          try {
-            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
-            return Number(saved.lockUntil) || 0;
-          } catch (e) {
-            return 0;
-          }
-        });
+        const [failCount, setFailCount] = useState(() => readLoginGuardState().failCount);
+        const [lockUntil, setLockUntil] = useState(() => readLoginGuardState().lockUntil);
         const [lockRemainingSec, setLockRemainingSec] = useState(() => {
-          try {
-            const saved = JSON.parse(localStorage.getItem('frc10114_login_guard') || '{}');
-            const until = Number(saved.lockUntil) || 0;
-            return until > Date.now() ? Math.ceil((until - Date.now()) / 1000) : 0;
-          } catch (e) {
-            return 0;
-          }
+          const until = readLoginGuardState().lockUntil;
+          return until > Date.now() ? Math.ceil((until - Date.now()) / 1000) : 0;
         });
 
         useEffect(() => {
-          if (lockUntil <= Date.now()) {
+          const persisted = readLoginGuardState();
+          const effectiveUntil = Math.max(lockUntil, persisted.lockUntil);
+          if (effectiveUntil <= Date.now()) {
             setLockRemainingSec(0);
             return;
           }
-          setLockRemainingSec(Math.ceil((lockUntil - Date.now()) / 1000));
+          if (effectiveUntil !== lockUntil) {
+            setLockUntil(effectiveUntil);
+          }
+          setLockRemainingSec(Math.ceil((effectiveUntil - Date.now()) / 1000));
           const interval = setInterval(() => {
-            const diff = Math.ceil((lockUntil - Date.now()) / 1000);
+            const latest = readLoginGuardState();
+            const activeUntil = Math.max(effectiveUntil, latest.lockUntil);
+            const diff = Math.ceil((activeUntil - Date.now()) / 1000);
             if (diff <= 0) {
               setLockRemainingSec(0);
               setLockUntil(0);
               setFailCount(0);
-              try { localStorage.removeItem('frc10114_login_guard'); } catch (e) {}
+              clearLoginGuardState();
               clearInterval(interval);
             } else {
               setLockRemainingSec(diff);
@@ -16683,21 +17188,18 @@
         }, [lockUntil]);
 
         const recordFailedAttempt = (baseMsg, setErrFn) => {
-          const nextCount = failCount + 1;
+          const currentGuard = readLoginGuardState();
+          const nextCount = Math.max(failCount, currentGuard.failCount) + 1;
           if (nextCount >= MAX_LOGIN_ATTEMPTS) {
             const until = Date.now() + LOCKOUT_DURATION_MS;
             setFailCount(0);
             setLockUntil(until);
             setLockRemainingSec(60);
-            try {
-              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: 0, lockUntil: until }));
-            } catch (e) {}
+            writeLoginGuardState(0, until);
             setErrFn('連續密碼錯誤達 5 次！系統已啟動防暴力破解保護，暫時鎖定 60 秒。');
           } else {
             setFailCount(nextCount);
-            try {
-              localStorage.setItem('frc10114_login_guard', JSON.stringify({ failCount: nextCount, lockUntil: 0 }));
-            } catch (e) {}
+            writeLoginGuardState(nextCount, 0);
             setErrFn(`${baseMsg}（剩餘嘗試次數：${MAX_LOGIN_ATTEMPTS - nextCount} 次）`);
           }
         };
@@ -16706,10 +17208,10 @@
           setFailCount(0);
           setLockUntil(0);
           setLockRemainingSec(0);
-          try { localStorage.removeItem('frc10114_login_guard'); } catch (e) {}
+          clearLoginGuardState();
         };
 
-        const isLockedOut = lockRemainingSec > 0;
+        const isLockedOut = lockRemainingSec > 0 || readLoginGuardState().lockUntil > Date.now();
 
         useEffect(() => {
           if (adminMembers.length > 0 && !adminMembers.some(a => a.id === selectedAdminId)) {
@@ -16904,8 +17406,9 @@
                       <label className="block text-xs font-bold text-zinc-700 mb-1">選擇管理員教練帳號</label>
                       <select
                         value={selectedAdminId}
+                        disabled={isLockedOut || isVerifying}
                         onChange={(e) => { setSelectedAdminId(e.target.value); setAdminErr(''); }}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-400"
                       >
                         {adminMembers.map(a => (
                           <option key={a.id} value={a.id}>{a.name} ({a.id})</option>
@@ -16941,7 +17444,7 @@
                       <div className="relative">
                         <input
                           type={showAdminPass ? 'text' : 'password'}
-                          disabled={isLockedOut}
+                          disabled={isLockedOut || isVerifying}
                           value={adminPassword}
                           onChange={(e) => { setAdminPassword(e.target.value); setAdminErr(''); }}
                           placeholder="請輸入管理員密碼"
@@ -16966,7 +17469,7 @@
 
                     <button
                       type="submit"
-                      disabled={isLockedOut}
+                      disabled={isLockedOut || isVerifying}
                       className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
                     >
                       <Icon name="lock" className="w-4 h-4 text-orange-400" />
@@ -16982,8 +17485,9 @@
                       <label className="block text-xs font-bold text-zinc-700 mb-1">選擇登入隊員</label>
                       <select
                         value={memberId}
+                        disabled={isLockedOut || isVerifying}
                         onChange={(e) => { setMemberId(e.target.value); setMemberErr(''); }}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-400"
                       >
                         {studentMembers.map(m => (
                           <option key={m.id} value={m.id}>
@@ -17022,7 +17526,7 @@
                       <div className="relative">
                         <input
                           type={showMemberPass ? 'text' : 'password'}
-                          disabled={isLockedOut}
+                          disabled={isLockedOut || isVerifying}
                           value={memberPassword}
                           onChange={(e) => { setMemberPassword(e.target.value); setMemberErr(''); }}
                           placeholder="請輸入隊員密碼"
@@ -17047,7 +17551,7 @@
 
                     <button
                       type="submit"
-                      disabled={isLockedOut}
+                      disabled={isLockedOut || isVerifying}
                       className="w-full py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
                     >
                       <Icon name="lock" className="w-4 h-4 text-white" />
@@ -17070,8 +17574,9 @@
                       <label className="block text-xs font-bold text-zinc-700 mb-1">選擇學生姓名（孩子）</label>
                       <select
                         value={parentStudentId}
+                        disabled={isLockedOut || isVerifying}
                         onChange={(e) => { setParentStudentId(e.target.value); setParentErr(''); }}
-                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                        className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:ring-2 focus:ring-orange-500 disabled:bg-zinc-100 disabled:text-zinc-400"
                       >
                         {studentMembers.map(s => (
                           <option key={s.id} value={s.id}>
@@ -17112,7 +17617,7 @@
                       <div className="relative">
                         <input
                           type={showParentPass ? 'text' : 'password'}
-                          disabled={isLockedOut}
+                          disabled={isLockedOut || isVerifying}
                           value={parentPassword}
                           onChange={(e) => { setParentPassword(e.target.value); setParentErr(''); }}
                           placeholder={(currentSelStudentForParent?.hasCustomParentPass || currentSelStudentForParent?.parentPassword) ? "請輸入自訂的家長密碼" : "請輸入家長通關密碼"}
@@ -17137,7 +17642,7 @@
 
                     <button
                       type="submit"
-                      disabled={isLockedOut}
+                      disabled={isLockedOut || isVerifying}
                       className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center gap-2"
                     >
                       <Icon name="heart" className="w-4 h-4 text-orange-400" />

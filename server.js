@@ -22,8 +22,11 @@ const MIME_TYPES = {
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'SAMEORIGIN',
+  'X-Frame-Options': 'DENY',
+  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://www.gstatic.com https://cdnjs.cloudflare.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.google.com https://*.googleusercontent.com https://*.firebaseio.com https://*.firebaseapp.com https://www.gstatic.com wss://*.firebaseio.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none';",
 };
 
 const server = http.createServer((req, res) => {
@@ -35,6 +38,71 @@ const server = http.createServer((req, res) => {
     res.end('400 Bad Request');
     return;
   }
+
+  // Local API Proxy for Google Apps Script Sheet Submission (/api/submit-sheet & /api/webhook)
+  if ((reqPath === '/api/submit-sheet' || reqPath === '/api/webhook') && req.method === 'POST') {
+    let bodyStr = '';
+    req.on('data', chunk => {
+      bodyStr += chunk;
+      if (bodyStr.length > 512 * 1024) req.destroy();
+    });
+    req.on('end', async () => {
+      try {
+        const parsedBody = JSON.parse(bodyStr || '{}');
+        const envWebhookUrl = (process.env.GAS_WEBHOOK_URL || '').trim();
+        const envSpreadsheetId = (process.env.GOOGLE_SPREADSHEET_ID || '').trim();
+        const envWebhookSecret = (process.env.GAS_WEBHOOK_SECRET || '').trim();
+        const trimmedUrl = envWebhookUrl || (parsedBody.webhookUrl || '').trim();
+        if (!trimmedUrl) {
+          res.writeHead(400, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ status: 'error', message: '尚未設定 GAS_WEBHOOK_URL 環境變數或 Webhook 網址' }));
+          return;
+        }
+        if (!/^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec(\?.*)?$/.test(trimmedUrl)) {
+          res.writeHead(400, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ status: 'error', message: '安全攔截：僅允許轉發至官方 Google Apps Script 網址' }));
+          return;
+        }
+        const rawPayload = parsedBody.payload || parsedBody;
+        const forwardPayload = {
+          spreadsheetId: envSpreadsheetId || rawPayload.spreadsheetId || '',
+          date: rawPayload.date || '',
+          morning: rawPayload.morning || '',
+          afternoon: rawPayload.afternoon || '',
+          evening: rawPayload.evening || '',
+          fullText: rawPayload.fullText || '',
+          submittedAt: rawPayload.submittedAt || new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }),
+          ...(envWebhookSecret ? { token: envWebhookSecret } : {}),
+        };
+        const gasRes = await fetch(trimmedUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(forwardPayload),
+          redirect: 'follow',
+        });
+        if (!gasRes.ok) {
+          res.writeHead(502, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ status: 'error', message: `Google Apps Script 回應異常 (HTTP ${gasRes.status})` }));
+          return;
+        }
+        const text = await gasRes.text();
+        let gasJson = null;
+        try { gasJson = JSON.parse(text); } catch (err) { gasJson = null; }
+        if (gasJson && gasJson.status === 'error') {
+          res.writeHead(502, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ status: 'error', message: gasJson.message || '試算表腳本執行失敗' }));
+          return;
+        }
+        res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'success', verified: Boolean(gasJson && gasJson.status === 'success') }));
+      } catch (err) {
+        res.writeHead(500, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: err?.message || '後端轉發失敗，請檢查網路連線' }));
+      }
+    });
+    return;
+  }
+
   if (reqPath === '/' || reqPath === '') {
     reqPath = '/index.html';
   }
