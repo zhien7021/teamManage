@@ -8018,6 +8018,11 @@
               attendees: [],
             });
           }
+          if (date < todayStr) {
+            setShowPast(true);
+          }
+          setDeptFilter('all');
+          setTypeFilter('all');
           setIsAddOpen(false);
           setEditingEvent(null);
           setName('');

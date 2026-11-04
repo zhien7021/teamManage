@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /frc10114_teams/team_state {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly([
+        'members', 'events', 'tasks', 'pendingTasks',
+        'materials', 'attendance', 'reservations',
+        'eduCategories', 'eduEquipment',
+        'updatedAt', 'updatedBy'
+      ]);
+      allow delete: if false;
+    }
+
+    match /frc10114_vault/{docId} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if request.resource.data.keys().size() <= 15;
+      allow delete: if docId.matches('^(auth_|adm_|self_|mpii_|inbox_|outbox_).*');
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
