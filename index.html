@@ -7885,9 +7885,9 @@
         );
       }
 
-      // --- 5.2 ADMIN CALENDAR TAB WITH SUB-CATEGORIES (活動表 & 月行事曆) ---
+      // --- 5.2 ADMIN CALENDAR TAB WITH SUB-CATEGORIES (活動表 & 月行事曆 & 調查 & 教材需求表) ---
       function AdminCalendarTab({ events, members = [], onAddEvent, onUpdateEvent, onDeleteEvent, onShowToast }) {
-        const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey'
+        const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey' | 'materials'
         const [isAddOpen, setIsAddOpen] = useState(false);
         const [editingEvent, setEditingEvent] = useState(null);
         const [deptFilter, setDeptFilter] = useState('all');
@@ -7907,6 +7907,8 @@
         const [location, setLocation] = useState('科技中心');
         const [description, setDescription] = useState('');
         const [allowRegistration, setAllowRegistration] = useState(false);
+        const [needsMaterials, setNeedsMaterials] = useState(false);
+        const [materialCount, setMaterialCount] = useState('');
 
         const types = [
           '機電整合組培訓',
@@ -7930,6 +7932,8 @@
           setLocation('科技中心');
           setDescription('');
           setAllowRegistration(false);
+          setNeedsMaterials(false);
+          setMaterialCount('');
           setIsAddOpen(true);
         };
 
@@ -7947,6 +7951,8 @@
           setLocation(ev.location || '科技中心');
           setDescription(ev.description || '');
           setAllowRegistration(!!ev.allowRegistration);
+          setNeedsMaterials(!!ev.needsMaterials);
+          setMaterialCount(ev.materialCount ? String(ev.materialCount) : '');
           setIsAddOpen(true);
         };
 
@@ -7975,6 +7981,7 @@
           if (!name.trim()) return;
           const normalizedType = type ? type.replace(/程式設計/g, '程式控制') : '機電整合組培訓';
           const normalizedDepts = depts.map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d);
+          const parsedMaterialCount = needsMaterials ? Math.max(1, parseInt(materialCount, 10) || 1) : 0;
           if (editingEvent) {
             if (onUpdateEvent) {
               onUpdateEvent({
@@ -7988,6 +7995,9 @@
                 location,
                 description,
                 allowRegistration: !!allowRegistration,
+                needsMaterials: !!needsMaterials,
+                materialCount: parsedMaterialCount,
+                materialPrepared: needsMaterials ? Boolean(editingEvent.materialPrepared) : false,
                 attendees: editingEvent.attendees || [],
               });
             }
@@ -8002,6 +8012,9 @@
               location,
               description,
               allowRegistration: !!allowRegistration,
+              needsMaterials: !!needsMaterials,
+              materialCount: parsedMaterialCount,
+              materialPrepared: false,
               attendees: [],
             });
           }
@@ -8010,9 +8023,14 @@
           setName('');
           setDescription('');
           setAllowRegistration(false);
+          setNeedsMaterials(false);
+          setMaterialCount('');
         };
 
         const surveyedEventsCount = events.filter(e => e.allowRegistration).length;
+        const materialEvents = events.filter(e => e.needsMaterials);
+        const materialEventsCount = materialEvents.length;
+        const unpreparedMaterialEventsCount = materialEvents.filter(e => !e.materialPrepared).length;
 
         return (
           <div className="space-y-6">
@@ -8030,8 +8048,8 @@
               </div>
 
               <div className="flex items-center gap-3 self-start md:self-auto flex-wrap">
-                {/* Three Sub-Categories Switcher: 1. 活動表 2. 月行事曆 3. 活動參與人數調查 */}
-                <div className="flex items-center bg-zinc-100 p-1.5 rounded-xl border border-zinc-200 text-xs font-bold">
+                {/* Four Sub-Categories Switcher: 1. 活動表 2. 月行事曆 3. 活動參與人數調查 4. 教材需求表 */}
+                <div className="flex items-center flex-wrap bg-zinc-100 p-1.5 rounded-xl border border-zinc-200 text-xs font-bold gap-1">
                   <button
                     type="button"
                     onClick={() => setSubTab('list')}
@@ -8070,6 +8088,27 @@
                     {surveyedEventsCount > 0 && (
                       <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-orange-600 text-white shadow-2xs">
                         {surveyedEventsCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubTab('materials')}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
+                      subTab === 'materials'
+                        ? 'bg-zinc-900 text-white shadow-xs'
+                        : 'text-zinc-600 hover:text-zinc-900'
+                    }`}
+                  >
+                    <Icon name="package" className="w-3.5 h-3.5 text-orange-400" />
+                    <span>4. 教材需求表</span>
+                    {materialEventsCount > 0 && (
+                      <span
+                        className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold shadow-2xs ${
+                          unpreparedMaterialEventsCount > 0 ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'
+                        }`}
+                      >
+                        {materialEventsCount}
                       </span>
                     )}
                   </button>
@@ -8183,6 +8222,16 @@
                               <span className="text-[10px] font-bold px-2 py-0.5 bg-orange-100 text-orange-800 border border-orange-300 rounded-md flex items-center gap-1">
                                 <Icon name="users" className="w-3 h-3 text-orange-600" />
                                 <span>開啟調查 (已報名 {(ev.attendees || []).length} 人)</span>
+                              </span>
+                            )}
+                            {ev.needsMaterials && (
+                              <span className={`text-[10px] font-bold px-2 py-0.5 border rounded-md flex items-center gap-1 ${
+                                ev.materialPrepared
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                                  : 'bg-amber-50 text-amber-800 border-amber-300'
+                              }`}>
+                                <Icon name="package" className="w-3 h-3" />
+                                <span>需準備教材 {ev.materialCount || 0} 份 ({ev.materialPrepared ? '已準備完成' : '未備料'})</span>
                               </span>
                             )}
                           </div>
@@ -8617,6 +8666,211 @@
               </div>
             )}
 
+            {/* Sub-Category 4: 教材需求表 (勾選管理教材準備狀態) */}
+            {subTab === 'materials' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                {/* Material Requirements Summary Banner */}
+                <div className="bg-gradient-to-r from-amber-50/70 via-orange-50/40 to-white border border-amber-200 rounded-xl p-5 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
+                        <Icon name="package" className="w-4 h-4 text-orange-600" />
+                        <span>活動教材與備料需求總表</span>
+                      </div>
+                      <p className="text-xs text-zinc-600">
+                        凡在發布或編輯活動時勾選「是否需準備教材」之活動將自動彙整於此。直接勾選前方核取方塊代表「已經準備完成」，未勾選代表「還沒備料完畢」。
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                      <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
+                        <span className="text-[10px] text-zinc-500 font-bold block">待備料活動</span>
+                        <span className="text-lg font-black text-amber-600">
+                          {unpreparedMaterialEventsCount}
+                        </span>
+                      </div>
+                      <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
+                        <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
+                        <span className="text-lg font-black text-emerald-600">
+                          {materialEventsCount - unpreparedMaterialEventsCount}
+                        </span>
+                      </div>
+                      <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
+                        <span className="text-[10px] text-zinc-500 font-bold block">累計需求總份數</span>
+                        <span className="text-lg font-black text-zinc-900">
+                          {materialEvents.reduce((sum, ev) => sum + (parseInt(ev.materialCount, 10) || 0), 0)} 份
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Material Requirements Checklist Card */}
+                {materialEvents.length > 0 ? (
+                  <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
+                    <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Icon name="checkSquare" className="w-4 h-4 text-orange-600" />
+                        <h3 className="text-sm font-black text-zinc-900">
+                          教材準備核對清單（共 {materialEvents.length} 項活動）
+                        </h3>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          exportToCSV(
+                            `FRC10114_教材需求表_${getTodayDateStr()}.csv`,
+                            ['備料狀態', '活動名稱', '需求份數(人數)', '活動日期', '時間', '適用組別', '地點', '說明備註'],
+                            materialEvents.map(ev => [
+                              ev.materialPrepared ? '已準備完成' : '尚未備料完畢',
+                              ev.name || '',
+                              `${ev.materialCount || 0} 份`,
+                              ev.date || '',
+                              `${ev.startTime || ''}-${ev.endTime || ''}`,
+                              (ev.departments || []).join('、'),
+                              ev.location || '',
+                              ev.description || ''
+                            ])
+                          );
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 shadow-2xs transition-colors cursor-pointer self-start sm:self-auto"
+                      >
+                        <Icon name="download" className="w-3.5 h-3.5 text-orange-600" />
+                        <span>匯出教材需求表 (CSV)</span>
+                      </button>
+                    </div>
+
+                    <div className="divide-y divide-zinc-100">
+                      {materialEvents.map((ev, idx) => {
+                        const isPrepared = Boolean(ev.materialPrepared);
+                        return (
+                          <div
+                            key={ev.id}
+                            onClick={() => {
+                              if (onUpdateEvent) {
+                                onUpdateEvent({
+                                  ...ev,
+                                  materialPrepared: !isPrepared,
+                                });
+                              }
+                            }}
+                            className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all cursor-pointer ${
+                              isPrepared
+                                ? 'bg-emerald-50/30 hover:bg-emerald-50/60'
+                                : 'bg-white hover:bg-orange-50/40'
+                            }`}
+                          >
+                            <div className="flex items-start sm:items-center gap-3.5 flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isPrepared}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  if (onUpdateEvent) {
+                                    onUpdateEvent({
+                                      ...ev,
+                                      materialPrepared: e.target.checked,
+                                    });
+                                  }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 focus:ring-emerald-500 cursor-pointer shrink-0"
+                              />
+
+                              <div className="space-y-1 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-mono text-xs font-bold text-zinc-400">
+                                    #{idx + 1}
+                                  </span>
+                                  <span
+                                    className={`text-sm sm:text-base font-black tracking-tight ${
+                                      isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
+                                    }`}
+                                  >
+                                    {ev.name}
+                                  </span>
+                                  <span
+                                    className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
+                                      isPrepared
+                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                        : 'bg-orange-100 text-orange-800 border-orange-300'
+                                    }`}
+                                  >
+                                    需準備：{ev.materialCount || 0} 份 (人)
+                                  </span>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                                  <span className="font-semibold text-zinc-700 flex items-center gap-1">
+                                    <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
+                                    {ev.date}
+                                  </span>
+                                  <span className="font-mono flex items-center gap-1">
+                                    <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
+                                    {ev.startTime} - {ev.endTime}
+                                  </span>
+                                  <span className="text-[11px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200 font-medium">
+                                    {ev.type}
+                                  </span>
+                                  {(ev.departments || []).map(d => (
+                                    <span key={d} className="text-[10px] px-1.5 py-0.5 bg-zinc-50 text-zinc-600 rounded border border-zinc-200">
+                                      {d}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-center shrink-0" onClick={(e) => e.stopPropagation()}>
+                              <span
+                                className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                  isPrepared
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                    : 'bg-amber-50 text-amber-800 border-amber-300'
+                                }`}
+                              >
+                                <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
+                                <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                              </span>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEdit(ev)}
+                                className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
+                                title="編輯活動與教材份數"
+                              >
+                                <Icon name="edit" className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
+                    <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
+                    <h3 className="text-base font-bold text-zinc-800">目前尚無需要準備教材的活動</h3>
+                    <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-5">
+                      當您在發布新活動或編輯現有活動時，勾選「是否需準備教材」並填寫所需份數，系統就會自動將活動與份數彙整至本頁供您勾選核對備料進度。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleOpenAdd();
+                        setNeedsMaterials(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                    >
+                      <Icon name="plus" className="w-4 h-4" />
+                      <span>發布新活動 (設定教材需求)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Add / Edit Event Modal */}
             {isAddOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -8760,6 +9014,48 @@
                           打勾時此活動將進入「3. 活動參與人數調查」列表，隊員可在學生端點選是否報名參加，管理員可統籌查看名冊與增刪名單。
                         </span>
                       </label>
+                    </div>
+
+                    {/* 是否需準備教材（教材需求表） */}
+                    <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2.5">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          id="adminNeedsMaterials"
+                          checked={needsMaterials}
+                          onChange={(e) => setNeedsMaterials(e.target.checked)}
+                          className="mt-0.5 w-4 h-4 text-orange-600 rounded border-zinc-300 focus:ring-orange-500 cursor-pointer"
+                        />
+                        <label htmlFor="adminNeedsMaterials" className="text-xs cursor-pointer select-none flex-1">
+                          <span className="font-bold text-zinc-900 flex items-center gap-1.5">
+                            <span>是否需準備教材</span>
+                            <span className="text-[10px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded-full font-bold">4. 教材需求表</span>
+                          </span>
+                          <span className="text-zinc-500 text-[11px] block mt-0.5 leading-relaxed">
+                            打勾後可填寫需準備的教材份數（人數），系統將自動彙整至「4. 教材需求表」分頁供勾選追蹤備料進度。
+                          </span>
+                        </label>
+                      </div>
+
+                      {needsMaterials && (
+                        <div className="pl-7 pt-1 animate-in fade-in duration-150">
+                          <label className="block text-xs font-bold text-zinc-800 mb-1">
+                            需要準備多少份教材（人數） *
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="1"
+                              required={needsMaterials}
+                              value={materialCount}
+                              onChange={(e) => setMaterialCount(e.target.value)}
+                              placeholder="請輸入需要準備的份數，例如：20"
+                              className="w-48 p-2 bg-white border border-amber-300 rounded-lg text-xs font-mono font-bold text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                            />
+                            <span className="text-xs font-bold text-zinc-600">份 (人)</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
