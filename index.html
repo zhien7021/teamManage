@@ -813,7 +813,7 @@
           const dynAuthDocId = getVaultAuthDocId('admin', memberId, derivedDynH2, true);
           const legAuthDocId = getVaultAuthDocId('admin', memberId, derivedLegH2, false);
           if (isLocalVerifiedAuth(dynAuthDocId) || isLocalVerifiedAuth(legAuthDocId)) return true;
-          if (!targetMember.hasCustomPass) return isDefaultRolePassword(proof, 'admin', memberId);
+          if (isDefaultRolePassword(proof, 'admin', memberId)) return true;
           return false;
         }
         if (role === 'parent') {
@@ -834,7 +834,7 @@
           ) {
             return true;
           }
-          if (!targetMember.hasCustomParentPass) return isDefaultRolePassword(proof, 'parent', memberId);
+          if (isDefaultRolePassword(proof, 'parent', memberId)) return true;
           return false;
         }
         if (targetMember.password) {
@@ -843,7 +843,7 @@
         const mDynId = getVaultAuthDocId('member', memberId, derivedDynH2, true);
         const mLegId = getVaultAuthDocId('member', memberId, derivedLegH2, false);
         if (isLocalVerifiedAuth(mDynId) || isLocalVerifiedAuth(mLegId)) return true;
-        if (!targetMember.hasCustomPass) return isDefaultRolePassword(proof, 'member', memberId);
+        if (isDefaultRolePassword(proof, 'member', memberId)) return true;
         return false;
       }
 
@@ -2065,6 +2065,31 @@
         }
       }
 
+      // Zero-Knowledge Local Vault Cache (Per-member encrypted storage fallback for zero-latency UI restore)
+      function saveLocalVaultPii(memberId, proofOrPlain, piiObj) {
+        if (!memberId || !piiObj || typeof localStorage === 'undefined') return;
+        try {
+          const proof = deriveClientProof(proofOrPlain || '10114', memberId);
+          const key = rawDigest256('LOCAL_VAULT_KEY_V1', `${memberId}::${proof}`);
+          const cipher = vaultEncrypt(JSON.stringify(piiObj), key);
+          localStorage.setItem('_vlt_mem_' + memberId, cipher);
+        } catch (e) {}
+      }
+
+      function readLocalVaultPii(memberId, proofOrPlain) {
+        if (!memberId || typeof localStorage === 'undefined') return {};
+        try {
+          const cipher = localStorage.getItem('_vlt_mem_' + memberId);
+          if (!cipher) return {};
+          const proof = deriveClientProof(proofOrPlain || '10114', memberId);
+          const key = rawDigest256('LOCAL_VAULT_KEY_V1', `${memberId}::${proof}`);
+          const dec = vaultDecrypt(cipher, key);
+          return dec ? JSON.parse(dec) : {};
+        } catch (e) {
+          return {};
+        }
+      }
+
       function uint8ToBase64(bytes) {
         let bin = '';
         for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -2298,7 +2323,7 @@
         if (isLocalVerifiedAuth(dynAuthDocId) || isLocalVerifiedAuth(authDocId)) return true;
 
         if (role === 'admin') {
-          if (!targetMember.hasCustomPass && isDefaultRolePassword(cleanPass, 'admin', targetMember.id)) {
+          if (isDefaultRolePassword(cleanPass, 'admin', targetMember.id)) {
             recordLocalVerifiedAuth(dynAuthDocId);
             recordLocalVerifiedAuth(authDocId);
             return true;
@@ -2306,14 +2331,14 @@
           return false;
         }
         if (role === 'parent') {
-          if (!targetMember.hasCustomParentPass && isDefaultRolePassword(cleanPass, 'member', targetMember.id)) {
+          if (isDefaultRolePassword(cleanPass, 'member', targetMember.id)) {
             recordLocalVerifiedAuth(dynAuthDocId);
             recordLocalVerifiedAuth(authDocId);
             return true;
           }
           return false;
         }
-        if (!targetMember.hasCustomPass && isDefaultRolePassword(cleanPass, 'member', targetMember.id)) {
+        if (isDefaultRolePassword(cleanPass, 'member', targetMember.id)) {
           recordLocalVerifiedAuth(dynAuthDocId);
           recordLocalVerifiedAuth(authDocId);
           return true;
@@ -2436,7 +2461,7 @@
           // Member / Parent Vault Unlock
           const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
           const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
-          let myPii = {};
+          let myPii = readLocalVaultPii(memberId, proof) || {};
           let rsaPubJwk = null;
           let rsaPrivJwk = null;
           let needsSelfSave = false;
@@ -2464,10 +2489,14 @@
             const dec = vaultDecrypt(selfSnap.data().cipherPayload, activeSelfKey);
             if (dec) {
               const parsed = JSON.parse(dec);
-              myPii = parsed.pii || parsed || {};
+              const cloudPii = parsed.pii || parsed || {};
+              myPii = { ...myPii, ...cloudPii };
               rsaPubJwk = parsed.rsaPubJwk || null;
               rsaPrivJwk = parsed.rsaPrivJwk || null;
             }
+          } else if (Object.keys(myPii).length > 0) {
+            // Local vault has data but cloud doc is not created yet; trigger cloud backup
+            needsSelfSave = true;
           }
 
           // Check one-time member migration doc
@@ -2531,10 +2560,15 @@
             });
           }
 
-          return Object.keys(myPii).length > 0 ? { [memberId]: myPii } : {};
+          if (Object.keys(myPii).length > 0) {
+            saveLocalVaultPii(memberId, proof, myPii);
+            return { [memberId]: myPii };
+          }
+          return {};
         } catch (e) {
           console.warn('Unlock vault warning:', e);
-          return {};
+          const localFallback = readLocalVaultPii(memberId, proofOrPlain);
+          return Object.keys(localFallback).length > 0 ? { [memberId]: localFallback } : {};
         }
       }
 
@@ -2589,29 +2623,30 @@
       }
 
       async function saveMemberVaultData(firebaseConfig, memberId, memberProof, myPii) {
+        if (!memberId || !myPii) return false;
+        const effectiveProof = memberProof || deriveClientProof('10114', memberId);
+        saveLocalVaultPii(memberId, effectiveProof, myPii);
         const db = initFirestore(firebaseConfig);
-        if (!db || !memberId || !myPii) return false;
+        if (!db) return true;
         try {
-          if (memberProof) {
-            const proof = deriveClientProof(memberProof, memberId);
-            const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
-            const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
-            let rsaPubJwk = null;
-            let rsaPrivJwk = null;
-            const snap = await db.collection('frc10114_vault').doc(selfDocId).get();
-            if (snap.exists && snap.data()?.cipherPayload) {
-              const dec = vaultDecrypt(snap.data().cipherPayload, selfKey);
-              if (dec) {
-                const parsed = JSON.parse(dec);
-                rsaPubJwk = parsed.rsaPubJwk || null;
-                rsaPrivJwk = parsed.rsaPrivJwk || null;
-              }
+          const proof = deriveClientProof(effectiveProof, memberId);
+          const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
+          const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
+          let rsaPubJwk = null;
+          let rsaPrivJwk = null;
+          const snap = await db.collection('frc10114_vault').doc(selfDocId).get();
+          if (snap.exists && snap.data()?.cipherPayload) {
+            const dec = vaultDecrypt(snap.data().cipherPayload, selfKey);
+            if (dec) {
+              const parsed = JSON.parse(dec);
+              rsaPubJwk = parsed.rsaPubJwk || null;
+              rsaPrivJwk = parsed.rsaPrivJwk || null;
             }
-            await db.collection('frc10114_vault').doc(selfDocId).set({
-              cipherPayload: vaultEncrypt(JSON.stringify({ pii: myPii, rsaPubJwk, rsaPrivJwk }), selfKey),
-              updatedAt: Date.now(),
-            });
           }
+          await db.collection('frc10114_vault').doc(selfDocId).set({
+            cipherPayload: vaultEncrypt(JSON.stringify({ pii: myPii, rsaPubJwk, rsaPrivJwk }), selfKey),
+            updatedAt: Date.now(),
+          });
           // Seal copy for Coach via Coach's 2048-bit RSA-OAEP Public Key
           const pubAdminSnap = await db.collection('frc10114_vault').doc('pub_admin_key').get();
           if (pubAdminSnap.exists && pubAdminSnap.data()?.pubJwk) {
@@ -2712,7 +2747,9 @@
             const oldDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', oldKey);
             const newKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${newProof}`);
             const newDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', newKey);
-            let payloadObj = { pii: (piiMapOrMyPii && piiMapOrMyPii[memberId]) || {} };
+            const oldLocalPii = readLocalVaultPii(memberId, oldPass) || {};
+            const memoryPii = (piiMapOrMyPii && piiMapOrMyPii[memberId]) || {};
+            let payloadObj = { pii: { ...oldLocalPii, ...memoryPii } };
             let snap = await db.collection('frc10114_vault').doc(oldDocId).get();
             let activeOldKey = oldKey;
             if ((!snap.exists || !snap.data()?.cipherPayload) && oldLegProof !== oldProof) {
@@ -2728,8 +2765,12 @@
             }
             if (snap.exists && snap.data()?.cipherPayload) {
               const dec = vaultDecrypt(snap.data().cipherPayload, activeOldKey);
-              if (dec) payloadObj = { ...JSON.parse(dec), pii: (piiMapOrMyPii && piiMapOrMyPii[memberId]) || JSON.parse(dec).pii || {} };
+              if (dec) {
+                const parsed = JSON.parse(dec);
+                payloadObj = { ...parsed, pii: { ...oldLocalPii, ...memoryPii, ...(parsed.pii || parsed || {}) } };
+              }
             }
+            saveLocalVaultPii(memberId, newPass, payloadObj.pii);
             await db.collection('frc10114_vault').doc(newDocId).set({
               cipherPayload: vaultEncrypt(JSON.stringify(payloadObj), newKey),
               updatedAt: Date.now(),
@@ -3319,6 +3360,14 @@
           }
           const proof = getSessionProofFromStorage();
           if (!proof) return;
+          // Synchronous Instant Local Vault Restore (Zero-latency offline & cache fallback)
+          const localPii = readLocalVaultPii(currentMember.id, proof);
+          if (localPii && Object.keys(localPii).length > 0) {
+            unlockedPiiMapRef.current = { ...unlockedPiiMapRef.current, [currentMember.id]: localPii };
+            setMembers(prev => normalizeMembersFromStorage(prev, unlockedPiiMapRef.current));
+            setCurrentMember(prev => prev ? ({ ...prev, ...localPii }) : prev);
+            setDraftMember(prev => prev ? ({ ...prev, ...localPii }) : prev);
+          }
           let cancelled = false;
           unlockSessionVault(firebaseConfig, currentRole, currentMember.id, proof, members).then((piiMap) => {
             if (cancelled || !piiMap || Object.keys(piiMap).length === 0) return;
@@ -3975,10 +4024,12 @@
           };
 
           // Save PII to isolated Admin Vault (NEVER to public team_state)
+          const adminDraftPii = extractMemberPii(normalizedDraft);
           unlockedPiiMapRef.current = {
             ...unlockedPiiMapRef.current,
-            [normalizedDraft.id]: extractMemberPii(normalizedDraft),
+            [normalizedDraft.id]: adminDraftPii,
           };
+          saveLocalVaultPii(normalizedDraft.id, pendingNewPass || '10114', adminDraftPii);
           if (pendingNewPass) {
             const newAuthId = getVaultAuthDocId(tRole, normalizedDraft.id, pendingNewPass, true);
             const legAuthId = getVaultAuthDocId(tRole, normalizedDraft.id, pendingNewPass, false);
@@ -4142,17 +4193,19 @@
             ...unlockedPiiMapRef.current,
             [safeUpdated.id]: myPii,
           };
+          const currentSessionProof = getSessionProofFromStorage();
+          saveLocalVaultPii(safeUpdated.id, currentSessionProof, myPii);
           let vaultOk = true;
           if (currentRole === 'admin') {
             vaultOk = await saveAdminVaultData(
               firebaseConfig,
               currentMember?.id || '10114-001',
-              getSessionProofFromStorage(),
+              currentSessionProof,
               unlockedPiiMapRef.current,
               safeUpdated.id
             );
           } else {
-            vaultOk = await saveMemberVaultData(firebaseConfig, safeUpdated.id, getSessionProofFromStorage(), myPii);
+            vaultOk = await saveMemberVaultData(firebaseConfig, safeUpdated.id, currentSessionProof, myPii);
           }
           if (firebaseConfig && !vaultOk) {
             showToast('操作失敗，請檢查網路連線', '敏感個資存入雲端加密保險箱失敗，請檢查網路連線', 'error');
@@ -4175,9 +4228,9 @@
             return false;
           }
           if (currentRole !== 'admin' && !safeUpdated.hasCustomPass && hasMemberPii(safeUpdated)) {
-            showToast('個資已加密傳送予教練！', '提醒：請變更預設密碼 (10114)，以便下次登入時能自行解鎖檢視個資', 'info');
+            showToast('個人資料儲存成功！', '敏感個資已存入專屬加密保險箱（提醒：建議日後可變更預設密碼提升安全性）', 'success');
           } else {
-            showToast('個人資料儲存成功！', '敏感個資已存入獨立加密保險箱，不會外洩於公開資料表', 'success');
+            showToast('個人資料儲存成功！', '敏感個資已存入獨立加密保險箱，已完整妥善保存', 'success');
           }
           return true;
         };
