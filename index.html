@@ -408,13 +408,13 @@
       }
 
       // Runtime-derived default hashes (eliminates hardcoded hash2$ hex strings from frontend source code)
-      const DEFAULT_ADMIN_ENC = hashPassword(decodeSecret('enc$675c702660654672673d3d'));
-      const DEFAULT_MEMBER_ENC = hashPassword(decodeSecret('enc$675c702660'));
+      const DEFAULT_ADMIN_ENC = hashPassword(decodeSecret('enc$36066136d3accaef674f'));
+      const DEFAULT_MEMBER_ENC = hashPassword(decodeSecret('enc$66523d6e89'));
 
       function isDefaultRolePassword(plainOrHash, role, memberId = '') {
         if (!plainOrHash) return false;
         const baseDefault = role === 'admin' ? DEFAULT_ADMIN_ENC : DEFAULT_MEMBER_ENC;
-        const defaultRaw = role === 'admin' ? decodeSecret('enc$675c702660654672673d3d') : decodeSecret('enc$675c702660');
+        const defaultRaw = role === 'admin' ? decodeSecret('enc$36066136d3accaef674f') : decodeSecret('enc$66523d6e89');
         const dynDefault = memberId ? hashPassword(defaultRaw, memberId) : baseDefault;
         const h2Leg = hashPassword(plainOrHash);
         const h2Dyn = memberId ? hashPassword(plainOrHash, memberId) : h2Leg;
@@ -2324,8 +2324,8 @@
       async function unlockSessionVault(firebaseConfig, role, memberId, proofOrPlain, membersList) {
         const db = initFirestore(firebaseConfig);
         if (!db || !role || !memberId || !proofOrPlain) return {};
-        const proof = deriveClientProof(proofOrPlain);
-        const h2 = hashPassword(proof);
+        const proof = deriveClientProof(proofOrPlain, memberId);
+        const h2 = hashPassword(proof, memberId);
 
         try {
           if (role === 'admin') {
@@ -2336,9 +2336,27 @@
             let rsaPrivJwk = null;
             let needsSave = false;
 
-            const admSnap = await db.collection('frc10114_vault').doc(adminVaultDocId).get();
+            let admSnap = await db.collection('frc10114_vault').doc(adminVaultDocId).get();
+            let activeAdminKey = adminVaultKey;
+            // Legacy fallback if admin vault was saved with non-memberId proof
+            if ((!admSnap.exists || !admSnap.data()?.cipherPayload) && proofOrPlain) {
+              const legProof = deriveClientProof(proofOrPlain);
+              if (legProof !== proof) {
+                const legKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${memberId}::${legProof}`);
+                const legDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', legKey);
+                try {
+                  const legSnap = await db.collection('frc10114_vault').doc(legDocId).get();
+                  if (legSnap.exists && legSnap.data()?.cipherPayload) {
+                    admSnap = legSnap;
+                    activeAdminKey = legKey;
+                    needsSave = true;
+                  }
+                } catch (legErr) {}
+              }
+            }
+
             if (admSnap.exists && admSnap.data()?.cipherPayload) {
-              const dec = vaultDecrypt(admSnap.data().cipherPayload, adminVaultKey);
+              const dec = vaultDecrypt(admSnap.data().cipherPayload, activeAdminKey);
               if (dec) {
                 const parsed = JSON.parse(dec);
                 piiMap = parsed.piiMap || {};
@@ -2415,11 +2433,7 @@
             return piiMap;
           }
 
-          // Member / Parent Vault Unlock (Strictly requires non-default password!)
-          if (h2 === DEFAULT_MEMBER_ENC) {
-            return {};
-          }
-
+          // Member / Parent Vault Unlock
           const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
           const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
           let myPii = {};
@@ -2427,9 +2441,27 @@
           let rsaPrivJwk = null;
           let needsSelfSave = false;
 
-          const selfSnap = await db.collection('frc10114_vault').doc(selfDocId).get();
+          let selfSnap = await db.collection('frc10114_vault').doc(selfDocId).get();
+          let activeSelfKey = selfKey;
+          // Legacy fallback if member vault was saved with non-memberId proof
+          if ((!selfSnap.exists || !selfSnap.data()?.cipherPayload) && proofOrPlain) {
+            const legProof = deriveClientProof(proofOrPlain);
+            if (legProof !== proof) {
+              const legKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${legProof}`);
+              const legDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', legKey);
+              try {
+                const legSnap = await db.collection('frc10114_vault').doc(legDocId).get();
+                if (legSnap.exists && legSnap.data()?.cipherPayload) {
+                  selfSnap = legSnap;
+                  activeSelfKey = legKey;
+                  needsSelfSave = true;
+                }
+              } catch (legErr) {}
+            }
+          }
+
           if (selfSnap.exists && selfSnap.data()?.cipherPayload) {
-            const dec = vaultDecrypt(selfSnap.data().cipherPayload, selfKey);
+            const dec = vaultDecrypt(selfSnap.data().cipherPayload, activeSelfKey);
             if (dec) {
               const parsed = JSON.parse(dec);
               myPii = parsed.pii || parsed || {};
@@ -2510,7 +2542,7 @@
         const db = initFirestore(firebaseConfig);
         if (!db || !adminId || !adminProof) return false;
         try {
-          const proof = deriveClientProof(adminProof);
+          const proof = deriveClientProof(adminProof, adminId);
           const adminVaultKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${adminId}::${proof}`);
           const adminVaultDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', adminVaultKey);
           let rsaPubJwk = null;
@@ -2531,15 +2563,13 @@
 
           if (targetMemberId && piiMap[targetMemberId]) {
             if (targetNewPlainPass) {
-              const tProof = deriveClientProof(targetNewPlainPass);
-              if (hashPassword(tProof) !== DEFAULT_MEMBER_ENC) {
-                const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${targetMemberId}::${tProof}`);
-                const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
-                await db.collection('frc10114_vault').doc(selfDocId).set({
-                  cipherPayload: vaultEncrypt(JSON.stringify({ pii: piiMap[targetMemberId] }), selfKey),
-                  updatedAt: Date.now(),
-                });
-              }
+              const tProof = deriveClientProof(targetNewPlainPass, targetMemberId);
+              const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${targetMemberId}::${tProof}`);
+              const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
+              await db.collection('frc10114_vault').doc(selfDocId).set({
+                cipherPayload: vaultEncrypt(JSON.stringify({ pii: piiMap[targetMemberId] }), selfKey),
+                updatedAt: Date.now(),
+              });
             }
             const pubMemDocId = 'pub_mem_' + rawDigest256('PUB_MEM_DOC_V3', targetMemberId);
             const pubSnap = await db.collection('frc10114_vault').doc(pubMemDocId).get();
@@ -2563,26 +2593,24 @@
         if (!db || !memberId || !myPii) return false;
         try {
           if (memberProof) {
-            const proof = deriveClientProof(memberProof);
-            if (hashPassword(proof) !== DEFAULT_MEMBER_ENC) {
-              const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
-              const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
-              let rsaPubJwk = null;
-              let rsaPrivJwk = null;
-              const snap = await db.collection('frc10114_vault').doc(selfDocId).get();
-              if (snap.exists && snap.data()?.cipherPayload) {
-                const dec = vaultDecrypt(snap.data().cipherPayload, selfKey);
-                if (dec) {
-                  const parsed = JSON.parse(dec);
-                  rsaPubJwk = parsed.rsaPubJwk || null;
-                  rsaPrivJwk = parsed.rsaPrivJwk || null;
-                }
+            const proof = deriveClientProof(memberProof, memberId);
+            const selfKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${proof}`);
+            const selfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', selfKey);
+            let rsaPubJwk = null;
+            let rsaPrivJwk = null;
+            const snap = await db.collection('frc10114_vault').doc(selfDocId).get();
+            if (snap.exists && snap.data()?.cipherPayload) {
+              const dec = vaultDecrypt(snap.data().cipherPayload, selfKey);
+              if (dec) {
+                const parsed = JSON.parse(dec);
+                rsaPubJwk = parsed.rsaPubJwk || null;
+                rsaPrivJwk = parsed.rsaPrivJwk || null;
               }
-              await db.collection('frc10114_vault').doc(selfDocId).set({
-                cipherPayload: vaultEncrypt(JSON.stringify({ pii: myPii, rsaPubJwk, rsaPrivJwk }), selfKey),
-                updatedAt: Date.now(),
-              });
             }
+            await db.collection('frc10114_vault').doc(selfDocId).set({
+              cipherPayload: vaultEncrypt(JSON.stringify({ pii: myPii, rsaPubJwk, rsaPrivJwk }), selfKey),
+              updatedAt: Date.now(),
+            });
           }
           // Seal copy for Coach via Coach's 2048-bit RSA-OAEP Public Key
           const pubAdminSnap = await db.collection('frc10114_vault').doc('pub_admin_key').get();
@@ -2642,17 +2670,30 @@
               console.warn('Old auth doc cleanup warning:', delErr);
             }
           }
-          const oldProof = deriveClientProof(oldPass);
-          const newProof = deriveClientProof(newPass);
+          const oldProof = deriveClientProof(oldPass, memberId);
+          const oldLegProof = deriveClientProof(oldPass);
+          const newProof = deriveClientProof(newPass, memberId);
           if (role === 'admin') {
             const oldKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${memberId}::${oldProof}`);
             const oldDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', oldKey);
             const newKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${memberId}::${newProof}`);
             const newDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', newKey);
             let payloadObj = { piiMap: piiMapOrMyPii || {} };
-            const snap = await db.collection('frc10114_vault').doc(oldDocId).get();
+            let snap = await db.collection('frc10114_vault').doc(oldDocId).get();
+            let activeOldKey = oldKey;
+            if ((!snap.exists || !snap.data()?.cipherPayload) && oldLegProof !== oldProof) {
+              const legKey = rawDigest256('ADMIN_VAULT_KEY_V3', `${memberId}::${oldLegProof}`);
+              const legDocId = 'adm_' + rawDigest256('ADMIN_VAULT_DOC_V3', legKey);
+              try {
+                const legSnap = await db.collection('frc10114_vault').doc(legDocId).get();
+                if (legSnap.exists && legSnap.data()?.cipherPayload) {
+                  snap = legSnap;
+                  activeOldKey = legKey;
+                }
+              } catch (legErr) {}
+            }
             if (snap.exists && snap.data()?.cipherPayload) {
-              const dec = vaultDecrypt(snap.data().cipherPayload, oldKey);
+              const dec = vaultDecrypt(snap.data().cipherPayload, activeOldKey);
               if (dec) payloadObj = { ...JSON.parse(dec), piiMap: piiMapOrMyPii || JSON.parse(dec).piiMap || {} };
             }
             await db.collection('frc10114_vault').doc(newDocId).set({
@@ -2672,9 +2713,21 @@
             const newKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${newProof}`);
             const newDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', newKey);
             let payloadObj = { pii: (piiMapOrMyPii && piiMapOrMyPii[memberId]) || {} };
-            const snap = await db.collection('frc10114_vault').doc(oldDocId).get();
+            let snap = await db.collection('frc10114_vault').doc(oldDocId).get();
+            let activeOldKey = oldKey;
+            if ((!snap.exists || !snap.data()?.cipherPayload) && oldLegProof !== oldProof) {
+              const legKey = rawDigest256('SELF_VAULT_KEY_V3', `${memberId}::${oldLegProof}`);
+              const legDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', legKey);
+              try {
+                const legSnap = await db.collection('frc10114_vault').doc(legDocId).get();
+                if (legSnap.exists && legSnap.data()?.cipherPayload) {
+                  snap = legSnap;
+                  activeOldKey = legKey;
+                }
+              } catch (legErr) {}
+            }
             if (snap.exists && snap.data()?.cipherPayload) {
-              const dec = vaultDecrypt(snap.data().cipherPayload, oldKey);
+              const dec = vaultDecrypt(snap.data().cipherPayload, activeOldKey);
               if (dec) payloadObj = { ...JSON.parse(dec), pii: (piiMapOrMyPii && piiMapOrMyPii[memberId]) || JSON.parse(dec).pii || {} };
             }
             await db.collection('frc10114_vault').doc(newDocId).set({
