@@ -8037,10 +8037,10 @@
             .reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0);
 
           const driftUnpreparedQty = driftRows
-            .filter(d => !d.prepared)
+            .filter(d => !d.prepared && !d.shipped)
             .reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0);
           const driftPreparedQty = driftRows
-            .filter(d => d.prepared)
+            .filter(d => d.prepared || d.shipped)
             .reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0);
 
           const totalUnpreparedQty = activityUnpreparedQty + driftUnpreparedQty;
@@ -8056,7 +8056,7 @@
             driftUnpreparedQty,
             driftPreparedQty,
             driftCount: driftRows.length,
-            driftUnpreparedCount: driftRows.filter(d => !d.prepared).length,
+            driftUnpreparedCount: driftRows.filter(d => !d.prepared && !d.shipped).length,
             totalUnpreparedQty,
             totalPreparedQty,
             totalQty,
@@ -8090,6 +8090,8 @@
         // Material Drift (材料飄移區) State
         const [isDriftModalOpen, setIsDriftModalOpen] = useState(false);
         const [isBulkDriftModalOpen, setIsBulkDriftModalOpen] = useState(false);
+        const [showShippedDrift, setShowShippedDrift] = useState(false);
+        const [shippingConfirmDrift, setShippingConfirmDrift] = useState(null);
         const [editingDrift, setEditingDrift] = useState(null);
         const [driftSchool, setDriftSchool] = useState('');
         const [driftApplicant, setDriftApplicant] = useState('');
@@ -8473,7 +8475,7 @@
         const activityMaterialsCount = materialChecklistRows.length;
         const unpreparedActivityMaterialsCount = materialChecklistRows.filter(r => !r.item.prepared).length;
         const driftTotalCount = (driftRecords || []).length;
-        const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared).length;
+        const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared && !d.shipped).length;
         const materialEventsCount = activityMaterialsCount + driftTotalCount;
         const unpreparedMaterialEventsCount = unpreparedActivityMaterialsCount + unpreparedDriftCount;
 
@@ -8502,6 +8504,14 @@
               ? driftRecords || []
               : (driftRecords || []).filter(d => d && String(d.courseName).trim() === selectedMaterialCourse),
           [driftRecords, selectedMaterialCourse]
+        );
+        const activeDriftRecords = useMemo(
+          () => displayedDriftRecords.filter(d => !d.shipped),
+          [displayedDriftRecords]
+        );
+        const shippedDriftRecords = useMemo(
+          () => displayedDriftRecords.filter(d => Boolean(d.shipped)),
+          [displayedDriftRecords]
         );
         const activeSelectedCourseSummary = useMemo(
           () => courseSummaries.find(c => c.courseName === selectedMaterialCourse) || null,
@@ -9632,7 +9642,7 @@
                             </span>
                           </div>
                           <p className="text-xs text-zinc-600">
-                            管理各校申請之教材課程與數量（含學校、申請人、申請課程、數量、班級數、寄件地址、連絡電話）。可點選右上角「單筆新增材料飄移」或「多筆新增材料飄移」快速建立！
+                            管理各校申請之教材課程與數量（含學校、申請人、申請課程、數量、班級數、寄件地址、連絡電話）。備料後可點選「已寄送」，確認寄送後該筆紀錄會自動沉降收納至最下方！
                           </p>
                         </div>
 
@@ -9640,19 +9650,25 @@
                           <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">待備料申請</span>
                             <span className="text-lg font-black text-amber-600">
-                              {displayedDriftRecords.filter(d => !d.prepared).length}
+                              {activeDriftRecords.filter(d => !d.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
-                            <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
+                            <span className="text-[10px] text-zinc-500 font-bold block">已備料待寄送</span>
                             <span className="text-lg font-black text-emerald-600">
-                              {displayedDriftRecords.filter(d => d.prepared).length}
+                              {activeDriftRecords.filter(d => d.prepared).length}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-sky-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">已寄送完成</span>
+                            <span className="text-lg font-black text-sky-600">
+                              {shippedDriftRecords.length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">待準備份數</span>
                             <span className="text-lg font-black text-orange-600">
-                              {displayedDriftRecords
+                              {activeDriftRecords
                                 .filter(d => !d.prepared)
                                 .reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)}{' '}
                               份
@@ -9662,171 +9678,337 @@
                       </div>
                     </div>
 
-                    {/* Drift Checklist Card */}
+                    {/* Active (Unshipped) Drift Checklist Card */}
                     {displayedDriftRecords.length > 0 ? (
-                      <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
-                        <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
-                            <h3 className="text-sm font-black text-zinc-900">
-                              材料飄移備料核對清單（共 {displayedDriftRecords.length} 筆申請）
-                            </h3>
+                      <div className="space-y-4">
+                        <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
+                          <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
+                              <h3 className="text-sm font-black text-zinc-900">
+                                待寄送 / 備料核對清單（目前待處理 {activeDriftRecords.length} 筆）
+                              </h3>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                exportToCSV(
+                                  `FRC10114_材料飄移備料表_${getTodayDateStr()}.csv`,
+                                  ['備料狀態', '寄送狀態', '申請的課程(材料)', '申請數量', '學校', '申請人', '班級數', '寄件地址', '連絡電話', '建立日期', '寄送日期'],
+                                  displayedDriftRecords.map(dr => [
+                                    dr.prepared || dr.shipped ? '已準備完成' : '尚未備料完畢',
+                                    dr.shipped ? '已寄送' : '尚未寄送',
+                                    dr.courseName || '',
+                                    `${dr.quantity || 0} 份`,
+                                    dr.school || '',
+                                    dr.applicant || '',
+                                    `${dr.classCount || 1} 班`,
+                                    dr.shippingAddress || '',
+                                    dr.phone || '',
+                                    dr.createdAt || '',
+                                    dr.shippedAt || ''
+                                  ])
+                                );
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 shadow-2xs transition-colors cursor-pointer self-start sm:self-auto"
+                            >
+                              <Icon name="download" className="w-3.5 h-3.5 text-orange-600" />
+                              <span>匯出材料飄移表 (CSV)</span>
+                            </button>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              exportToCSV(
-                                `FRC10114_材料飄移備料表_${getTodayDateStr()}.csv`,
-                                ['備料狀態', '申請的課程(材料)', '申請數量', '學校', '申請人', '班級數', '寄件地址', '連絡電話', '建立日期'],
-                                displayedDriftRecords.map(dr => [
-                                  dr.prepared ? '已準備完成' : '尚未備料完畢',
-                                  dr.courseName || '',
-                                  `${dr.quantity || 0} 份`,
-                                  dr.school || '',
-                                  dr.applicant || '',
-                                  `${dr.classCount || 1} 班`,
-                                  dr.shippingAddress || '',
-                                  dr.phone || '',
-                                  dr.createdAt || ''
-                                ])
-                              );
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 shadow-2xs transition-colors cursor-pointer self-start sm:self-auto"
-                          >
-                            <Icon name="download" className="w-3.5 h-3.5 text-orange-600" />
-                            <span>匯出材料飄移表 (CSV)</span>
-                          </button>
-                        </div>
+                          {activeDriftRecords.length > 0 ? (
+                            <div className="divide-y divide-zinc-100">
+                              {activeDriftRecords.map((dr, idx) => {
+                                const isPrepared = Boolean(dr.prepared);
+                                const toggleDriftPrepared = (nextVal) => {
+                                  if (onUpdateDriftRecord) {
+                                    onUpdateDriftRecord({
+                                      ...dr,
+                                      prepared: nextVal,
+                                    });
+                                  }
+                                };
 
-                        <div className="divide-y divide-zinc-100">
-                          {displayedDriftRecords.map((dr, idx) => {
-                            const isPrepared = Boolean(dr.prepared);
-                            const toggleDriftPrepared = (nextVal) => {
-                              if (onUpdateDriftRecord) {
-                                onUpdateDriftRecord({
-                                  ...dr,
-                                  prepared: nextVal,
-                                });
-                              }
-                            };
-
-                            return (
-                              <div
-                                key={dr.id || idx}
-                                onClick={() => toggleDriftPrepared(!isPrepared)}
-                                className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all cursor-pointer ${
-                                  isPrepared
-                                    ? 'bg-emerald-50/30 hover:bg-emerald-50/60'
-                                    : 'bg-white hover:bg-orange-50/40'
-                                }`}
-                              >
-                                <div className="flex items-start sm:items-center gap-3.5 flex-1">
-                                  <input
-                                    type="checkbox"
-                                    checked={isPrepared}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      toggleDriftPrepared(e.target.checked);
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 focus:ring-emerald-500 cursor-pointer shrink-0"
-                                  />
-
-                                  <div className="space-y-1 flex-1">
-                                    {/* Primary prominent line: 材料內容 & 數量 + 學校/申請人/班級數 */}
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="font-mono text-xs font-bold text-zinc-400">
-                                        #{idx + 1}
-                                      </span>
-                                      <span
-                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
-                                          isPrepared
-                                            ? 'bg-zinc-100 text-zinc-400 border-zinc-200 line-through'
-                                            : 'bg-purple-100 text-purple-900 border-purple-300'
-                                        }`}
-                                      >
-                                        📚 {dr.courseName || '未指定課程'}
-                                      </span>
-                                      <span
-                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
-                                          isPrepared
-                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                            : 'bg-orange-100 text-orange-800 border-orange-300'
-                                        }`}
-                                      >
-                                        需準備：{dr.quantity || 0} 份
-                                      </span>
-                                      <span
-                                        className={`text-sm font-extrabold ${
-                                          isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
-                                        }`}
-                                      >
-                                        {dr.school}
-                                      </span>
-                                      <span className="text-xs font-bold text-zinc-600">
-                                        · 申請人：{dr.applicant}
-                                      </span>
-                                      {dr.classCount && (
-                                        <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
-                                          {String(dr.classCount).replace(/班$/, '')} 班
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    {/* Secondary small text line: 寄件地址、連絡電話 */}
-                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
-                                      <span>
-                                        📍 寄件地址：{dr.shippingAddress || '未填寫地址'}
-                                      </span>
-                                      <span>
-                                        📞 連絡電話：{dr.phone || '未填寫電話'}
-                                      </span>
-                                      {dr.createdAt && (
-                                        <span>📅 登錄：{dr.createdAt}</span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0" onClick={(e) => e.stopPropagation()}>
-                                  <span
-                                    className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                return (
+                                  <div
+                                    key={dr.id || idx}
+                                    onClick={() => toggleDriftPrepared(!isPrepared)}
+                                    className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all cursor-pointer ${
                                       isPrepared
-                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                        : 'bg-amber-50 text-amber-800 border-amber-300'
+                                        ? 'bg-emerald-50/30 hover:bg-emerald-50/60'
+                                        : 'bg-white hover:bg-orange-50/40'
                                     }`}
                                   >
-                                    <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
-                                    <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                    <div className="flex items-start sm:items-center gap-3.5 flex-1">
+                                      <input
+                                        type="checkbox"
+                                        checked={isPrepared}
+                                        onChange={(e) => {
+                                          e.stopPropagation();
+                                          toggleDriftPrepared(e.target.checked);
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                      />
+
+                                      <div className="space-y-1 flex-1">
+                                        {/* Primary prominent line: 材料內容 & 數量 + 學校/申請人/班級數 */}
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="font-mono text-xs font-bold text-zinc-400">
+                                            #{idx + 1}
+                                          </span>
+                                          <span
+                                            className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                              isPrepared
+                                                ? 'bg-zinc-100 text-zinc-400 border-zinc-200 line-through'
+                                                : 'bg-purple-100 text-purple-900 border-purple-300'
+                                            }`}
+                                          >
+                                            📚 {dr.courseName || '未指定課程'}
+                                          </span>
+                                          <span
+                                            className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                              isPrepared
+                                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                                : 'bg-orange-100 text-orange-800 border-orange-300'
+                                            }`}
+                                          >
+                                            需準備：{dr.quantity || 0} 份
+                                          </span>
+                                          <span
+                                            className={`text-sm font-extrabold ${
+                                              isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
+                                            }`}
+                                          >
+                                            {dr.school}
+                                          </span>
+                                          <span className="text-xs font-bold text-zinc-600">
+                                            · 申請人：{dr.applicant}
+                                          </span>
+                                          {dr.classCount && (
+                                            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                              {String(dr.classCount).replace(/班$/, '')} 班
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {/* Secondary small text line: 寄件地址、連絡電話 */}
+                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
+                                          <span>
+                                            📍 寄件地址：{dr.shippingAddress || '未填寫地址'}
+                                          </span>
+                                          <span>
+                                            📞 連絡電話：{dr.phone || '未填寫電話'}
+                                          </span>
+                                          {dr.createdAt && (
+                                            <span>📅 登錄：{dr.createdAt}</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                                      <span
+                                        className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                          isPrepared
+                                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                            : 'bg-amber-50 text-amber-800 border-amber-300'
+                                        }`}
+                                      >
+                                        <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
+                                        <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                      </span>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => setShippingConfirmDrift(dr)}
+                                        className="text-xs font-extrabold px-3 py-1.5 rounded-lg border bg-sky-600 hover:bg-sky-700 text-white border-sky-600 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                                        title="點擊確認是否已寄送，確認後將沉降收納至下方"
+                                      >
+                                        <Icon name="send" className="w-3.5 h-3.5" />
+                                        <span>已寄送</span>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditDrift(dr)}
+                                        className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
+                                        title="編輯此筆材料飄移申請"
+                                      >
+                                        <Icon name="edit" className="w-4 h-4" />
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (onDeleteDriftRecord) {
+                                            onDeleteDriftRecord(dr.id, `${dr.school} - ${dr.courseName}`);
+                                          }
+                                        }}
+                                        className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200 cursor-pointer"
+                                        title="刪除此筆材料飄移申請"
+                                      >
+                                        <Icon name="trash" className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="p-8 text-center text-zinc-500">
+                              <Icon name="check" className="w-10 h-10 mx-auto mb-2 text-emerald-500" />
+                              <p className="text-sm font-extrabold text-zinc-800">
+                                目前所有材料飄移申請皆已寄送完畢！
+                              </p>
+                              <p className="text-xs text-zinc-500 mt-1">
+                                下方共有 {shippedDriftRecords.length} 筆「已寄送」紀錄，需要時可隨時點開下方區塊查閱。
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Sunk / Collapsible Shipped Drift Records at the Bottom */}
+                        {shippedDriftRecords.length > 0 && (
+                          <div className="bg-zinc-50 border border-zinc-200 rounded-2xl shadow-2xs overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setShowShippedDrift(prev => !prev)}
+                              className="w-full p-4 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-left hover:bg-zinc-100/80 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2.5 flex-wrap">
+                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-sky-100 text-sky-700 font-bold">
+                                  <Icon name="send" className="w-4 h-4" />
+                                </span>
+                                <div>
+                                  <span className="text-xs sm:text-sm font-black text-zinc-800">
+                                    📦 已寄送完成紀錄（共 {shippedDriftRecords.length} 筆 · 累計{' '}
+                                    {shippedDriftRecords.reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份）
                                   </span>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenEditDrift(dr)}
-                                    className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
-                                    title="編輯此筆材料飄移申請"
-                                  >
-                                    <Icon name="edit" className="w-4 h-4" />
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (onDeleteDriftRecord) {
-                                        onDeleteDriftRecord(dr.id, `${dr.school} - ${dr.courseName}`);
-                                      }
-                                    }}
-                                    className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200 cursor-pointer"
-                                    title="刪除此筆材料飄移申請"
-                                  >
-                                    <Icon name="trash" className="w-4 h-4" />
-                                  </button>
+                                  <span className="block text-[11px] text-zinc-500">
+                                    已確認寄出的申請會自動沉降至此處收納，點擊即可展開尋找或還原狀態
+                                  </span>
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
+
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-white text-zinc-700 border border-zinc-200 shadow-2xs self-start sm:self-center shrink-0">
+                                <span>{showShippedDrift ? '收合已寄送清單 ▲' : '點此展開尋找已寄送紀錄 ▼'}</span>
+                              </span>
+                            </button>
+
+                            {showShippedDrift && (
+                              <div className="border-t border-zinc-200 divide-y divide-zinc-200/70 bg-white/80 animate-in fade-in duration-150">
+                                {shippedDriftRecords.map((dr, idx) => (
+                                  <div
+                                    key={dr.id || idx}
+                                    className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-zinc-50/50 hover:bg-zinc-100/40 transition-colors"
+                                  >
+                                    <div className="flex items-start sm:items-center gap-3.5 flex-1 opacity-85">
+                                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-100 text-sky-700 text-xs font-black shrink-0">
+                                        ✓
+                                      </span>
+
+                                      <div className="space-y-1 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="font-mono text-xs font-bold text-zinc-400">
+                                            #{idx + 1}
+                                          </span>
+                                          <span className="text-xs sm:text-sm font-black px-2.5 py-0.5 rounded-lg border bg-zinc-100 text-zinc-600 border-zinc-300">
+                                            📚 {dr.courseName || '未指定課程'}
+                                          </span>
+                                          <span className="text-xs sm:text-sm font-black px-2.5 py-0.5 rounded-lg border bg-sky-50 text-sky-800 border-sky-200">
+                                            已寄送：{dr.quantity || 0} 份
+                                          </span>
+                                          <span className="text-sm font-extrabold text-zinc-700 line-through">
+                                            {dr.school}
+                                          </span>
+                                          <span className="text-xs font-bold text-zinc-500">
+                                            · 申請人：{dr.applicant}
+                                          </span>
+                                          {dr.classCount && (
+                                            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
+                                              {String(dr.classCount).replace(/班$/, '')} 班
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
+                                          <span>
+                                            📍 寄件地址：{dr.shippingAddress || '未填寫地址'}
+                                          </span>
+                                          <span>
+                                            📞 連絡電話：{dr.phone || '未填寫電話'}
+                                          </span>
+                                          {dr.shippedAt && (
+                                            <span className="text-sky-700 font-bold">
+                                              🚚 寄出日期：{dr.shippedAt}
+                                            </span>
+                                          )}
+                                          {dr.createdAt && (
+                                            <span>📅 登錄：{dr.createdAt}</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0 flex-wrap">
+                                      <span className="text-xs font-extrabold px-3 py-1.5 rounded-lg border bg-sky-100 text-sky-800 border-sky-300 flex items-center gap-1.5">
+                                        <Icon name="check" className="w-3.5 h-3.5" />
+                                        <span>已寄送完成</span>
+                                      </span>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (window.confirm(`確定要將「${dr.school} - ${dr.courseName}」還原為「未寄送」狀態並移回上方清單嗎？`)) {
+                                            if (onUpdateDriftRecord) {
+                                              onUpdateDriftRecord({
+                                                ...dr,
+                                                shipped: false,
+                                                shippedAt: '',
+                                              });
+                                            }
+                                            if (onShowToast) {
+                                              onShowToast('已還原為未寄送狀態', `「${dr.school} - ${dr.courseName}」已移回上方待寄送清單`, 'info');
+                                            }
+                                          }
+                                        }}
+                                        className="text-xs font-bold px-2.5 py-1.5 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 transition-colors cursor-pointer"
+                                        title="還原為未寄送狀態"
+                                      >
+                                        還原未寄送
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditDrift(dr)}
+                                        className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
+                                        title="編輯此筆材料飄移申請"
+                                      >
+                                        <Icon name="edit" className="w-4 h-4" />
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (onDeleteDriftRecord) {
+                                            onDeleteDriftRecord(dr.id, `${dr.school} - ${dr.courseName}`);
+                                          }
+                                        }}
+                                        className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200 cursor-pointer"
+                                        title="刪除此筆材料飄移申請"
+                                      >
+                                        <Icon name="trash" className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="bg-white border border-zinc-200 rounded-2xl p-10 text-center text-zinc-400 shadow-xs">
@@ -9860,6 +10042,92 @@
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Confirm Shipped Modal (確認是否已寄送) */}
+                {shippingConfirmDrift && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+                    <div className="bg-white border border-zinc-200 w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-9 h-9 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center">
+                            <Icon name="send" className="w-5 h-5" />
+                          </span>
+                          <div>
+                            <h3 className="text-base font-black text-zinc-900">確認是否已寄送教材？</h3>
+                            <p className="text-xs text-zinc-500">確認後此筆紀錄將標示為已寄送並沉降至下方收納區</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShippingConfirmDrift(null)}
+                          className="text-zinc-400 hover:text-zinc-700 p-1.5 rounded-lg"
+                        >
+                          <Icon name="x" className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-zinc-500 font-bold">申請學校 / 申請人：</span>
+                          <span className="font-black text-zinc-900">
+                            {shippingConfirmDrift.school} · {shippingConfirmDrift.applicant}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-zinc-500 font-bold">申請教材與數量：</span>
+                          <span className="font-black text-purple-800 bg-purple-100 px-2 py-0.5 rounded border border-purple-200">
+                            📚 {shippingConfirmDrift.courseName} × {shippingConfirmDrift.quantity || 0} 份
+                          </span>
+                        </div>
+                        {shippingConfirmDrift.shippingAddress && (
+                          <div className="pt-1 border-t border-zinc-200/80 text-zinc-600">
+                            📍 寄件地址：{shippingConfirmDrift.shippingAddress}
+                          </div>
+                        )}
+                        {shippingConfirmDrift.phone && (
+                          <div className="text-zinc-600">
+                            📞 連絡電話：{shippingConfirmDrift.phone}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShippingConfirmDrift(null)}
+                          className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-bold hover:bg-zinc-100 cursor-pointer"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onUpdateDriftRecord) {
+                              onUpdateDriftRecord({
+                                ...shippingConfirmDrift,
+                                prepared: true,
+                                shipped: true,
+                                shippedAt: getTodayDateStr(),
+                              });
+                            }
+                            if (onShowToast) {
+                              onShowToast(
+                                '已確認寄送完成！',
+                                `「${shippingConfirmDrift.school} - ${shippingConfirmDrift.courseName}」已移至下方已寄送紀錄區`,
+                                'success'
+                              );
+                            }
+                            setShippingConfirmDrift(null);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-extrabold shadow-xs cursor-pointer"
+                        >
+                          <Icon name="check" className="w-4 h-4" />
+                          <span>確認已寄送</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -14279,6 +14547,7 @@
         const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey' | 'materials'
         const [materialZone, setMaterialZone] = useState('activity'); // 'activity' | 'drift'
         const [selectedMaterialCourse, setSelectedMaterialCourse] = useState('all');
+        const [showShippedDrift, setShowShippedDrift] = useState(false);
         const allMaterialCourses = useMemo(() => {
           const base = ['翻轉燈', '發光卡片', 'Matrix機器人'];
           try {
@@ -14327,7 +14596,7 @@
         const activityMaterialsCount = materialChecklistRows.length;
         const unpreparedActivityMaterialsCount = materialChecklistRows.filter(r => !r.item.prepared).length;
         const driftTotalCount = (driftRecords || []).length;
-        const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared).length;
+        const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared && !d.shipped).length;
         const materialEventsCount = activityMaterialsCount + driftTotalCount;
         const unpreparedMaterialEventsCount = unpreparedActivityMaterialsCount + unpreparedDriftCount;
 
@@ -14356,6 +14625,14 @@
               ? driftRecords || []
               : (driftRecords || []).filter(d => d && String(d.courseName).trim() === selectedMaterialCourse),
           [driftRecords, selectedMaterialCourse]
+        );
+        const activeDriftRecords = useMemo(
+          () => displayedDriftRecords.filter(d => !d.shipped),
+          [displayedDriftRecords]
+        );
+        const shippedDriftRecords = useMemo(
+          () => displayedDriftRecords.filter(d => Boolean(d.shipped)),
+          [displayedDriftRecords]
         );
         const activeSelectedCourseSummary = useMemo(
           () => courseSummaries.find(c => c.courseName === selectedMaterialCourse) || null,
@@ -15204,7 +15481,7 @@
                             </span>
                           </div>
                           <p className="text-xs text-zinc-600">
-                            此處列出各校申請之材料飄移課程與所需數量，供隊員協助備料查閱（打勾確認僅限管理員操作）。
+                            此處列出各校申請之材料飄移課程與所需數量，供隊員協助備料查閱（打勾確認與寄送標示僅限管理員操作）。
                           </p>
                         </div>
 
@@ -15212,19 +15489,28 @@
                           <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">待備料申請</span>
                             <span className="text-lg font-black text-amber-600">
-                              {displayedDriftRecords.filter(d => !d.prepared).length}
+                              {activeDriftRecords.filter(d => !d.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
-                            <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
+                            <span className="text-[10px] text-zinc-500 font-bold block">已備料待寄送</span>
                             <span className="text-lg font-black text-emerald-600">
-                              {displayedDriftRecords.filter(d => d.prepared).length}
+                              {activeDriftRecords.filter(d => d.prepared).length}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-sky-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">已寄送完成</span>
+                            <span className="text-lg font-black text-sky-600">
+                              {shippedDriftRecords.length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
-                            <span className="text-[10px] text-zinc-500 font-bold block">累計申請總數</span>
-                            <span className="text-lg font-black text-zinc-900">
-                              {displayedDriftRecords.reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份
+                            <span className="text-[10px] text-zinc-500 font-bold block">待準備份數</span>
+                            <span className="text-lg font-black text-orange-600">
+                              {activeDriftRecords
+                                .filter(d => !d.prepared)
+                                .reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)}{' '}
+                              份
                             </span>
                           </div>
                         </div>
@@ -15232,109 +15518,204 @@
                     </div>
 
                     {displayedDriftRecords.length > 0 ? (
-                      <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
-                        <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
-                            <h3 className="text-sm font-black text-zinc-900">
-                              材料飄移備料狀態一覽（共 {displayedDriftRecords.length} 筆申請）
-                            </h3>
+                      <div className="space-y-4">
+                        <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
+                          <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
+                              <h3 className="text-sm font-black text-zinc-900">
+                                待寄送 / 備料狀態一覽（目前待處理 {activeDriftRecords.length} 筆）
+                              </h3>
+                            </div>
+                            <span className="text-[11px] font-bold text-zinc-500">
+                              打勾代表已由管理員確認準備完成
+                            </span>
                           </div>
-                          <span className="text-[11px] font-bold text-zinc-500">
-                            打勾代表已由管理員確認準備完成
-                          </span>
-                        </div>
 
-                        <div className="divide-y divide-zinc-100">
-                          {displayedDriftRecords.map((dr, idx) => {
-                            const isPrepared = Boolean(dr.prepared);
-                            return (
-                              <div
-                                key={dr.id || idx}
-                                className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-                                  isPrepared ? 'bg-emerald-50/30' : 'bg-white'
-                                }`}
-                              >
-                                <div className="flex items-start sm:items-center gap-3.5 flex-1">
-                                  <input
-                                    type="checkbox"
-                                    checked={isPrepared}
-                                    disabled={true}
-                                    readOnly
-                                    title="僅限管理員可打勾核准"
-                                    className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 cursor-not-allowed opacity-80 shrink-0"
-                                  />
-
-                                  <div className="space-y-1 flex-1">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="font-mono text-xs font-bold text-zinc-400">
-                                        #{idx + 1}
-                                      </span>
-                                      <span
-                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
-                                          isPrepared
-                                            ? 'bg-zinc-100 text-zinc-400 border-zinc-200 line-through'
-                                            : 'bg-purple-100 text-purple-900 border-purple-300'
-                                        }`}
-                                      >
-                                        📚 {dr.courseName || '未指定課程'}
-                                      </span>
-                                      <span
-                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
-                                          isPrepared
-                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                            : 'bg-orange-100 text-orange-800 border-orange-300'
-                                        }`}
-                                      >
-                                        需準備：{dr.quantity || 0} 份
-                                      </span>
-                                      <span
-                                        className={`text-sm font-extrabold ${
-                                          isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
-                                        }`}
-                                      >
-                                        {dr.school}
-                                      </span>
-                                      <span className="text-xs font-bold text-zinc-600">
-                                        · 申請人：{dr.applicant}
-                                      </span>
-                                      {dr.classCount && (
-                                        <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
-                                          {String(dr.classCount).replace(/班$/, '')} 班
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
-                                      <span>
-                                        📍 寄件地址：{dr.shippingAddress || '未填寫地址'}
-                                      </span>
-                                      <span>
-                                        📞 連絡電話：{dr.phone || '未填寫電話'}
-                                      </span>
-                                      {dr.createdAt && (
-                                        <span>📅 登錄：{dr.createdAt}</span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                                  <span
-                                    className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
-                                      isPrepared
-                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                        : 'bg-amber-50 text-amber-800 border-amber-300'
+                          {activeDriftRecords.length > 0 ? (
+                            <div className="divide-y divide-zinc-100">
+                              {activeDriftRecords.map((dr, idx) => {
+                                const isPrepared = Boolean(dr.prepared);
+                                return (
+                                  <div
+                                    key={dr.id || idx}
+                                    className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                                      isPrepared ? 'bg-emerald-50/30' : 'bg-white'
                                     }`}
                                   >
-                                    <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
-                                    <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                    <div className="flex items-start sm:items-center gap-3.5 flex-1">
+                                      <input
+                                        type="checkbox"
+                                        checked={isPrepared}
+                                        disabled={true}
+                                        readOnly
+                                        title="僅限管理員可打勾核准"
+                                        className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 cursor-not-allowed opacity-80 shrink-0"
+                                      />
+
+                                      <div className="space-y-1 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="font-mono text-xs font-bold text-zinc-400">
+                                            #{idx + 1}
+                                          </span>
+                                          <span
+                                            className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                              isPrepared
+                                                ? 'bg-zinc-100 text-zinc-400 border-zinc-200 line-through'
+                                                : 'bg-purple-100 text-purple-900 border-purple-300'
+                                            }`}
+                                          >
+                                            📚 {dr.courseName || '未指定課程'}
+                                          </span>
+                                          <span
+                                            className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                              isPrepared
+                                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                                : 'bg-orange-100 text-orange-800 border-orange-300'
+                                            }`}
+                                          >
+                                            需準備：{dr.quantity || 0} 份
+                                          </span>
+                                          <span
+                                            className={`text-sm font-extrabold ${
+                                              isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
+                                            }`}
+                                          >
+                                            {dr.school}
+                                          </span>
+                                          <span className="text-xs font-bold text-zinc-600">
+                                            · 申請人：{dr.applicant}
+                                          </span>
+                                          {dr.classCount && (
+                                            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                              {String(dr.classCount).replace(/班$/, '')} 班
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
+                                          <span>
+                                            📍 寄件地址：{dr.shippingAddress || '未填寫地址'}
+                                          </span>
+                                          <span>
+                                            📞 連絡電話：{dr.phone || '未填寫電話'}
+                                          </span>
+                                          {dr.createdAt && (
+                                            <span>📅 登錄：{dr.createdAt}</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                                      <span
+                                        className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                          isPrepared
+                                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                            : 'bg-amber-50 text-amber-800 border-amber-300'
+                                        }`}
+                                      >
+                                        <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
+                                        <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="p-8 text-center text-zinc-500">
+                              <Icon name="check" className="w-10 h-10 mx-auto mb-2 text-emerald-500" />
+                              <p className="text-sm font-extrabold text-zinc-800">
+                                目前所有材料飄移申請皆已寄送完畢！
+                              </p>
+                              <p className="text-xs text-zinc-500 mt-1">
+                                下方共有 {shippedDriftRecords.length} 筆「已寄送」紀錄，需要時可點開查閱。
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {shippedDriftRecords.length > 0 && (
+                          <div className="bg-zinc-50 border border-zinc-200 rounded-2xl shadow-2xs overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setShowShippedDrift(prev => !prev)}
+                              className="w-full p-4 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-left hover:bg-zinc-100/80 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2.5 flex-wrap">
+                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-sky-100 text-sky-700 font-bold">
+                                  <Icon name="send" className="w-4 h-4" />
+                                </span>
+                                <div>
+                                  <span className="text-xs sm:text-sm font-black text-zinc-800">
+                                    📦 已寄送完成紀錄（共 {shippedDriftRecords.length} 筆 · 累計{' '}
+                                    {shippedDriftRecords.reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份）
+                                  </span>
+                                  <span className="block text-[11px] text-zinc-500">
+                                    已寄出的申請沉降收納於此，點擊即可展開查閱
                                   </span>
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
+
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-white text-zinc-700 border border-zinc-200 shadow-2xs self-start sm:self-center shrink-0">
+                                <span>{showShippedDrift ? '收合已寄送清單 ▲' : '點此展開尋找已寄送紀錄 ▼'}</span>
+                              </span>
+                            </button>
+
+                            {showShippedDrift && (
+                              <div className="border-t border-zinc-200 divide-y divide-zinc-200/70 bg-white/80 animate-in fade-in duration-150">
+                                {shippedDriftRecords.map((dr, idx) => (
+                                  <div
+                                    key={dr.id || idx}
+                                    className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-zinc-50/50"
+                                  >
+                                    <div className="flex items-start sm:items-center gap-3.5 flex-1 opacity-85">
+                                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-100 text-sky-700 text-xs font-black shrink-0">
+                                        ✓
+                                      </span>
+
+                                      <div className="space-y-1 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="font-mono text-xs font-bold text-zinc-400">
+                                            #{idx + 1}
+                                          </span>
+                                          <span className="text-xs sm:text-sm font-black px-2.5 py-0.5 rounded-lg border bg-zinc-100 text-zinc-600 border-zinc-300">
+                                            📚 {dr.courseName || '未指定課程'}
+                                          </span>
+                                          <span className="text-xs sm:text-sm font-black px-2.5 py-0.5 rounded-lg border bg-sky-50 text-sky-800 border-sky-200">
+                                            已寄送：{dr.quantity || 0} 份
+                                          </span>
+                                          <span className="text-sm font-extrabold text-zinc-700 line-through">
+                                            {dr.school}
+                                          </span>
+                                          <span className="text-xs font-bold text-zinc-500">
+                                            · 申請人：{dr.applicant}
+                                          </span>
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
+                                          <span>📍 寄件地址：{dr.shippingAddress || '未填寫地址'}</span>
+                                          <span>📞 連絡電話：{dr.phone || '未填寫電話'}</span>
+                                          {dr.shippedAt && (
+                                            <span className="text-sky-700 font-bold">🚚 寄出日期：{dr.shippedAt}</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                                      <span className="text-xs font-extrabold px-3 py-1.5 rounded-lg border bg-sky-100 text-sky-800 border-sky-300 flex items-center gap-1.5">
+                                        <Icon name="check" className="w-3.5 h-3.5" />
+                                        <span>已寄送完成</span>
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
