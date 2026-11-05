@@ -8015,6 +8015,56 @@
         return results;
       }
 
+      // Helper: Aggregate pending & prepared quantities per material course across both Activity Prep & Material Drift
+      function computeMaterialSummaryByCourse(materialChecklistRows = [], driftRecords = [], baseCourses = []) {
+        const courseSet = new Set(baseCourses.filter(Boolean));
+        materialChecklistRows.forEach(r => {
+          if (r && r.item && r.item.name) courseSet.add(String(r.item.name).trim());
+        });
+        (driftRecords || []).forEach(d => {
+          if (d && d.courseName) courseSet.add(String(d.courseName).trim());
+        });
+
+        return Array.from(courseSet).map(courseName => {
+          const actRows = materialChecklistRows.filter(r => r.item && String(r.item.name).trim() === courseName);
+          const driftRows = (driftRecords || []).filter(d => d && String(d.courseName).trim() === courseName);
+
+          const activityUnpreparedQty = actRows
+            .filter(r => !r.item.prepared)
+            .reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0);
+          const activityPreparedQty = actRows
+            .filter(r => r.item.prepared)
+            .reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0);
+
+          const driftUnpreparedQty = driftRows
+            .filter(d => !d.prepared)
+            .reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0);
+          const driftPreparedQty = driftRows
+            .filter(d => d.prepared)
+            .reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0);
+
+          const totalUnpreparedQty = activityUnpreparedQty + driftUnpreparedQty;
+          const totalPreparedQty = activityPreparedQty + driftPreparedQty;
+          const totalQty = totalUnpreparedQty + totalPreparedQty;
+
+          return {
+            courseName,
+            activityUnpreparedQty,
+            activityPreparedQty,
+            activityCount: actRows.length,
+            activityUnpreparedCount: actRows.filter(r => !r.item.prepared).length,
+            driftUnpreparedQty,
+            driftPreparedQty,
+            driftCount: driftRows.length,
+            driftUnpreparedCount: driftRows.filter(d => !d.prepared).length,
+            totalUnpreparedQty,
+            totalPreparedQty,
+            totalQty,
+            totalItemsCount: actRows.length + driftRows.length,
+          };
+        });
+      }
+
       // --- 5.2 ADMIN CALENDAR TAB WITH SUB-CATEGORIES (活動表 & 月行事曆 & 調查 & 教材需求表) ---
       function AdminCalendarTab({
         events,
@@ -8030,6 +8080,7 @@
       }) {
         const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey' | 'materials'
         const [materialZone, setMaterialZone] = useState('activity'); // 'activity' (活動備料區) | 'drift' (材料飄移區)
+        const [selectedMaterialCourse, setSelectedMaterialCourse] = useState('all'); // 'all' or courseName
         const [isAddOpen, setIsAddOpen] = useState(false);
         const [editingEvent, setEditingEvent] = useState(null);
         const [deptFilter, setDeptFilter] = useState('all');
@@ -8038,6 +8089,7 @@
 
         // Material Drift (材料飄移區) State
         const [isDriftModalOpen, setIsDriftModalOpen] = useState(false);
+        const [isBulkDriftModalOpen, setIsBulkDriftModalOpen] = useState(false);
         const [editingDrift, setEditingDrift] = useState(null);
         const [driftSchool, setDriftSchool] = useState('');
         const [driftApplicant, setDriftApplicant] = useState('');
@@ -8207,6 +8259,7 @@
             onAddDriftRecords(parsedBulkDriftItems);
           }
           setBulkDriftText('');
+          setIsBulkDriftModalOpen(false);
         };
 
         const createMaterialRow = (defaultCourse = '翻轉燈') => ({
@@ -8423,6 +8476,37 @@
         const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared).length;
         const materialEventsCount = activityMaterialsCount + driftTotalCount;
         const unpreparedMaterialEventsCount = unpreparedActivityMaterialsCount + unpreparedDriftCount;
+
+        const courseSummaries = useMemo(
+          () => computeMaterialSummaryByCourse(materialChecklistRows, driftRecords, allMaterialCourses),
+          [materialChecklistRows, driftRecords, allMaterialCourses]
+        );
+        const totalAllUnpreparedQty = useMemo(
+          () => courseSummaries.reduce((sum, c) => sum + c.totalUnpreparedQty, 0),
+          [courseSummaries]
+        );
+        const totalAllPreparedQty = useMemo(
+          () => courseSummaries.reduce((sum, c) => sum + c.totalPreparedQty, 0),
+          [courseSummaries]
+        );
+        const displayedActivityChecklistRows = useMemo(
+          () =>
+            selectedMaterialCourse === 'all'
+              ? materialChecklistRows
+              : materialChecklistRows.filter(r => r.item && String(r.item.name).trim() === selectedMaterialCourse),
+          [materialChecklistRows, selectedMaterialCourse]
+        );
+        const displayedDriftRecords = useMemo(
+          () =>
+            selectedMaterialCourse === 'all'
+              ? driftRecords || []
+              : (driftRecords || []).filter(d => d && String(d.courseName).trim() === selectedMaterialCourse),
+          [driftRecords, selectedMaterialCourse]
+        );
+        const activeSelectedCourseSummary = useMemo(
+          () => courseSummaries.find(c => c.courseName === selectedMaterialCourse) || null,
+          [courseSummaries, selectedMaterialCourse]
+        );
 
         return (
           <div className="space-y-6">
@@ -9063,12 +9147,173 @@
               </div>
             )}
 
-            {/* Sub-Category 4: 教材需求表 (分為：活動備料區 & 材料飄移區) */}
+            {/* Sub-Category 4: 教材需求表 (最上層教材待準備總數清單 + 活動備料區 / 材料飄移區) */}
             {subTab === 'materials' && (
               <div className="space-y-6 animate-in fade-in duration-150">
+                {/* TOP-LEVEL MATERIAL SUMMARY & COURSE SWITCHER */}
+                <div className="bg-white border border-orange-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-extrabold text-orange-700 mb-0.5">
+                        <Icon name="layers" className="w-4 h-4 text-orange-600" />
+                        <span>各教材待準備數量總覽（點擊按鈕切換不同教材）</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500">
+                        自動彙整「活動備料區」與「材料飄移區」所有尚未打勾備妥之待準備材料總數，點選下方教材按鈕可即時切換並篩選明細。
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl text-center">
+                        <span className="text-[10px] font-bold text-amber-800 block">全教材待準備總數</span>
+                        <span className="text-base font-black text-amber-600">{totalAllUnpreparedQty} 份</span>
+                      </div>
+                      <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
+                        <span className="text-[10px] font-bold text-emerald-800 block">全教材已備妥總數</span>
+                        <span className="text-base font-black text-emerald-600">{totalAllPreparedQty} 份</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Course Switcher Buttons */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMaterialCourse('all')}
+                      className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                        selectedMaterialCourse === 'all'
+                          ? 'bg-zinc-900 text-white border-zinc-900 shadow-xs'
+                          : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200'
+                      }`}
+                    >
+                      <span>全部教材總覽</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                          selectedMaterialCourse === 'all'
+                            ? 'bg-amber-500 text-white'
+                            : totalAllUnpreparedQty > 0
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}
+                      >
+                        待準備 {totalAllUnpreparedQty} 份
+                      </span>
+                    </button>
+
+                    {courseSummaries.map(cs => {
+                      const isSelected = selectedMaterialCourse === cs.courseName;
+                      return (
+                        <button
+                          key={cs.courseName}
+                          type="button"
+                          onClick={() => setSelectedMaterialCourse(cs.courseName)}
+                          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-orange-600 text-white border-orange-600 shadow-xs'
+                              : 'bg-white hover:bg-orange-50/60 text-zinc-800 border-zinc-200'
+                          }`}
+                        >
+                          <span>📚 {cs.courseName}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              isSelected
+                                ? 'bg-white text-orange-700'
+                                : cs.totalUnpreparedQty > 0
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            }`}
+                          >
+                            待準備 {cs.totalUnpreparedQty} 份
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Top-Level Pending Material List / Selected Course Detail */}
+                  {selectedMaterialCourse === 'all' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                      {courseSummaries.map(cs => (
+                        <div
+                          key={cs.courseName}
+                          onClick={() => setSelectedMaterialCourse(cs.courseName)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                            cs.totalUnpreparedQty > 0
+                              ? 'bg-amber-50/50 hover:bg-amber-50 border-amber-200'
+                              : 'bg-zinc-50/70 hover:bg-zinc-100/80 border-zinc-200'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-zinc-900 flex items-center gap-1.5">
+                              <span>📚 {cs.courseName}</span>
+                              {cs.totalUnpreparedQty === 0 && cs.totalQty > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded font-bold">
+                                  ✓ 全數備妥
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-zinc-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <span>活動待備：<strong className="text-zinc-800">{cs.activityUnpreparedQty}</strong> 份</span>
+                              <span>·</span>
+                              <span>飄移待備：<strong className="text-zinc-800">{cs.driftUnpreparedQty}</strong> 份</span>
+                              <span>·</span>
+                              <span className="text-emerald-600">已備妥：{cs.totalPreparedQty} 份</span>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <span className="text-[10px] font-bold text-zinc-500 block">待準備總數</span>
+                            <span
+                              className={`text-lg font-black ${
+                                cs.totalUnpreparedQty > 0 ? 'text-orange-600' : 'text-emerald-600'
+                              }`}
+                            >
+                              {cs.totalUnpreparedQty} <span className="text-xs font-bold">份</span>
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    activeSelectedCourseSummary && (
+                      <div className="p-3.5 bg-orange-50/70 border border-orange-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-100">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-black text-zinc-900">
+                              📚 目前檢視教材：{activeSelectedCourseSummary.courseName}
+                            </span>
+                            <span className="text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-orange-600 text-white">
+                              待準備總數：{activeSelectedCourseSummary.totalUnpreparedQty} 份
+                            </span>
+                          </div>
+                          <div className="text-xs text-zinc-600 flex flex-wrap items-center gap-x-4 gap-y-1">
+                            <span>
+                              📅 活動備料待準備：<strong className="text-amber-700">{activeSelectedCourseSummary.activityUnpreparedQty} 份</strong>（{activeSelectedCourseSummary.activityUnpreparedCount} 筆未備）
+                            </span>
+                            <span>
+                              📦 材料飄移待準備：<strong className="text-purple-700">{activeSelectedCourseSummary.driftUnpreparedQty} 份</strong>（{activeSelectedCourseSummary.driftUnpreparedCount} 筆未備）
+                            </span>
+                            <span>
+                              ✅ 已準備完成：<strong className="text-emerald-700">{activeSelectedCourseSummary.totalPreparedQty} 份</strong>
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMaterialCourse('all')}
+                          className="text-xs font-bold text-zinc-700 hover:text-zinc-900 bg-white hover:bg-zinc-100 border border-zinc-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer self-start sm:self-center shrink-0"
+                        >
+                          返回顯示全部教材
+                        </button>
+                      </div>
+                    )
+                  )}
+                </div>
+
                 {/* Zone Switcher: 活動備料區 vs 材料飄移區 */}
                 <div className="bg-white border border-zinc-200 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-extrabold text-zinc-700 px-2">選擇教材備料分區：</span>
                     <div className="inline-flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200 text-xs font-bold gap-1">
                       <button
@@ -9091,7 +9336,7 @@
                               : 'bg-zinc-300 text-zinc-700'
                           }`}
                         >
-                          {activityMaterialsCount}
+                          {displayedActivityChecklistRows.length}
                         </span>
                       </button>
 
@@ -9115,21 +9360,32 @@
                               : 'bg-zinc-300 text-zinc-700'
                           }`}
                         >
-                          {driftTotalCount}
+                          {displayedDriftRecords.length}
                         </span>
                       </button>
                     </div>
                   </div>
 
                   {materialZone === 'drift' && (
-                    <button
-                      type="button"
-                      onClick={handleOpenAddDrift}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
-                    >
-                      <Icon name="plus" className="w-4 h-4 text-orange-400" />
-                      <span>單筆新增材料飄移</span>
-                    </button>
+                    <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={handleOpenAddDrift}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Icon name="plus" className="w-4 h-4 text-orange-400" />
+                        <span>單筆新增材料飄移</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsBulkDriftModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Icon name="fileSpreadsheet" className="w-4 h-4 text-white" />
+                        <span>多筆新增材料飄移</span>
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -9142,7 +9398,10 @@
                         <div>
                           <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
                             <Icon name="package" className="w-4 h-4 text-orange-600" />
-                            <span>活動備料區 — 團隊活動教材需求總表</span>
+                            <span>
+                              活動備料區 — 團隊活動教材需求總表
+                              {selectedMaterialCourse !== 'all' ? `（篩選：${selectedMaterialCourse}）` : ''}
+                            </span>
                           </div>
                           <p className="text-xs text-zinc-600">
                             凡在發布或編輯活動時勾選「是否需準備教材」之各教材項目將自動彙整於此。直接勾選前方核取方塊代表「已經準備完成」，未勾選代表「還沒備料完畢」。
@@ -9153,19 +9412,22 @@
                           <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">待備料項目</span>
                             <span className="text-lg font-black text-amber-600">
-                              {unpreparedActivityMaterialsCount}
+                              {displayedActivityChecklistRows.filter(r => !r.item.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
                             <span className="text-lg font-black text-emerald-600">
-                              {activityMaterialsCount - unpreparedActivityMaterialsCount}
+                              {displayedActivityChecklistRows.filter(r => r.item.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
-                            <span className="text-[10px] text-zinc-500 font-bold block">累計需求總份數</span>
-                            <span className="text-lg font-black text-zinc-900">
-                              {materialChecklistRows.reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)} 份
+                            <span className="text-[10px] text-zinc-500 font-bold block">待準備份數</span>
+                            <span className="text-lg font-black text-orange-600">
+                              {displayedActivityChecklistRows
+                                .filter(r => !r.item.prepared)
+                                .reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)}{' '}
+                              份
                             </span>
                           </div>
                         </div>
@@ -9173,13 +9435,13 @@
                     </div>
 
                     {/* Material Requirements Checklist Card */}
-                    {materialChecklistRows.length > 0 ? (
+                    {displayedActivityChecklistRows.length > 0 ? (
                       <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
                         <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex items-center gap-2">
                             <Icon name="checkSquare" className="w-4 h-4 text-orange-600" />
                             <h3 className="text-sm font-black text-zinc-900">
-                              活動備料核對清單（共 {materialChecklistRows.length} 項教材需求）
+                              活動備料核對清單（共 {displayedActivityChecklistRows.length} 項教材需求）
                             </h3>
                           </div>
 
@@ -9189,7 +9451,7 @@
                               exportToCSV(
                                 `FRC10114_活動備料需求表_${getTodayDateStr()}.csv`,
                                 ['備料狀態', '活動名稱', '教材/課程內容', '需求份數(人數)', '活動日期', '時間', '適用組別', '地點', '說明備註'],
-                                materialChecklistRows.map(({ ev, item }) => [
+                                displayedActivityChecklistRows.map(({ ev, item }) => [
                                   item.prepared ? '已準備完成' : '尚未備料完畢',
                                   ev.name || '',
                                   item.name || '未指定教材',
@@ -9210,7 +9472,7 @@
                         </div>
 
                         <div className="divide-y divide-zinc-100">
-                          {materialChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
+                          {displayedActivityChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
                             const isPrepared = Boolean(item.prepared);
                             const handleToggleItemPrepared = (nextPrepared) => {
                               if (!onUpdateEvent) return;
@@ -9331,7 +9593,11 @@
                     ) : (
                       <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
                         <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
-                        <h3 className="text-base font-bold text-zinc-800">目前尚無需要準備教材的活動</h3>
+                        <h3 className="text-base font-bold text-zinc-800">
+                          {selectedMaterialCourse === 'all'
+                            ? '目前尚無需要準備教材的活動'
+                            : `目前尚無「${selectedMaterialCourse}」的活動備料需求`}
+                        </h3>
                         <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-5">
                           當您在發布新活動或編輯現有活動時，勾選「是否需準備教材」並填寫所需份數，系統就會自動將活動與份數彙整至本頁供您勾選核對備料進度。
                         </p>
@@ -9360,10 +9626,13 @@
                         <div>
                           <div className="flex items-center gap-2 text-xs font-bold text-purple-900 mb-1">
                             <Icon name="package" className="w-4 h-4 text-purple-600" />
-                            <span>材料飄移區 — 跨校課程教材申請與寄送備料總表</span>
+                            <span>
+                              材料飄移區 — 跨校課程教材申請與寄送備料總表
+                              {selectedMaterialCourse !== 'all' ? `（篩選：${selectedMaterialCourse}）` : ''}
+                            </span>
                           </div>
                           <p className="text-xs text-zinc-600">
-                            管理各校申請之教材課程與數量（含學校、申請人、申請課程、數量、班級數、寄件地址、連絡電話）。備料完成後可直接打勾確認！
+                            管理各校申請之教材課程與數量（含學校、申請人、申請課程、數量、班級數、寄件地址、連絡電話）。可點選右上角「單筆新增材料飄移」或「多筆新增材料飄移」快速建立！
                           </p>
                         </div>
 
@@ -9371,127 +9640,36 @@
                           <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">待備料申請</span>
                             <span className="text-lg font-black text-amber-600">
-                              {unpreparedDriftCount}
+                              {displayedDriftRecords.filter(d => !d.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
                             <span className="text-lg font-black text-emerald-600">
-                              {driftTotalCount - unpreparedDriftCount}
+                              {displayedDriftRecords.filter(d => d.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
-                            <span className="text-[10px] text-zinc-500 font-bold block">累計申請總數</span>
-                            <span className="text-lg font-black text-zinc-900">
-                              {(driftRecords || []).reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份
+                            <span className="text-[10px] text-zinc-500 font-bold block">待準備份數</span>
+                            <span className="text-lg font-black text-orange-600">
+                              {displayedDriftRecords
+                                .filter(d => !d.prepared)
+                                .reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)}{' '}
+                              份
                             </span>
                           </div>
                         </div>
-                      </div>
-                    </div>
-
-                    {/* Multi-line Quick Copy-Paste Import Box */}
-                    <div className="bg-white border border-orange-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div>
-                          <h3 className="text-sm font-black text-zinc-900 flex items-center gap-1.5">
-                            <Icon name="fileSpreadsheet" className="w-4 h-4 text-orange-600" />
-                            <span>快速複製貼入多行內容導入資料</span>
-                          </h3>
-                          <p className="text-[11px] text-zinc-500 mt-0.5">
-                            可直接從 Excel / Google 試算表選取多列複製貼上（支援 Tab、逗號 <code className="bg-zinc-100 px-1 rounded">,</code>、直線 <code className="bg-zinc-100 px-1 rounded">|</code> 或空白分隔）。
-                            欄位順序：<strong className="text-zinc-800">學校、申請人、申請的課程、申請數量、班級數、寄件地址、連絡電話</strong>
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBulkDriftText(
-                              '錦和高中\t王小明\t翻轉燈\t30\t2\t新北市中和區錦和路163號\t0912-345-678\n積穗國中\t李華老師\t發光卡片\t25\t1\t新北市中和區民安街66號\t02-22234567'
-                            );
-                          }}
-                          className="text-[11px] font-bold text-orange-700 hover:text-orange-800 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer self-start sm:self-auto shrink-0"
-                        >
-                          帶入範例格式
-                        </button>
-                      </div>
-
-                      <textarea
-                        rows={4}
-                        value={bulkDriftText}
-                        onChange={(e) => setBulkDriftText(e.target.value)}
-                        placeholder={`請在此直接貼上多行資料（每行一筆申請），例如：\n錦和高中\t王小明\t翻轉燈\t30\t2\t新北市中和區錦和路163號\t0912-345-678\n中和國中\t陳老師\t發光卡片\t28\t1\t新北市中和區興南路二段\t0922-111-222`}
-                        className="w-full p-3 bg-zinc-50 focus:bg-white border border-zinc-300 rounded-xl text-xs font-mono text-zinc-900 focus:ring-2 focus:ring-orange-500"
-                      />
-
-                      {parsedBulkDriftItems.length > 0 && (
-                        <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2 animate-in fade-in duration-100">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-extrabold text-amber-900">
-                              🔍 即時預覽：已成功解析出 {parsedBulkDriftItems.length} 筆材料飄移資料
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setBulkDriftText('')}
-                              className="text-[11px] font-bold text-zinc-500 hover:text-rose-600 cursor-pointer"
-                            >
-                              清空內容
-                            </button>
-                          </div>
-                          <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-                            {parsedBulkDriftItems.map((p, i) => (
-                              <div
-                                key={i}
-                                className="text-[11px] bg-white border border-amber-200/80 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5"
-                              >
-                                <span className="font-mono font-bold text-zinc-400">#{i + 1}</span>
-                                <span className="font-bold text-purple-800 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">
-                                  📚 {p.courseName} × {p.quantity} 份
-                                </span>
-                                <span className="font-bold text-zinc-900">{p.school}</span>
-                                <span className="text-zinc-700">({p.applicant} · {p.classCount}班)</span>
-                                {p.shippingAddress && (
-                                  <span className="text-[10px] text-zinc-400">📍 {p.shippingAddress}</span>
-                                )}
-                                {p.phone && (
-                                  <span className="text-[10px] text-zinc-400">📞 {p.phone}</span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={handleBulkImportDrift}
-                          disabled={parsedBulkDriftItems.length === 0}
-                          className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all ${
-                            parsedBulkDriftItems.length > 0
-                              ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-xs cursor-pointer'
-                              : 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed'
-                          }`}
-                        >
-                          <Icon name="plus" className="w-4 h-4" />
-                          <span>
-                            {parsedBulkDriftItems.length > 0
-                              ? `一鍵導入這 ${parsedBulkDriftItems.length} 筆材料飄移資料`
-                              : '貼上多行資料後即可一鍵導入'}
-                          </span>
-                        </button>
                       </div>
                     </div>
 
                     {/* Drift Checklist Card */}
-                    {driftTotalCount > 0 ? (
+                    {displayedDriftRecords.length > 0 ? (
                       <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
                         <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex items-center gap-2">
                             <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
                             <h3 className="text-sm font-black text-zinc-900">
-                              材料飄移備料核對清單（共 {driftTotalCount} 筆申請）
+                              材料飄移備料核對清單（共 {displayedDriftRecords.length} 筆申請）
                             </h3>
                           </div>
 
@@ -9501,7 +9679,7 @@
                               exportToCSV(
                                 `FRC10114_材料飄移備料表_${getTodayDateStr()}.csv`,
                                 ['備料狀態', '申請的課程(材料)', '申請數量', '學校', '申請人', '班級數', '寄件地址', '連絡電話', '建立日期'],
-                                (driftRecords || []).map(dr => [
+                                displayedDriftRecords.map(dr => [
                                   dr.prepared ? '已準備完成' : '尚未備料完畢',
                                   dr.courseName || '',
                                   `${dr.quantity || 0} 份`,
@@ -9522,7 +9700,7 @@
                         </div>
 
                         <div className="divide-y divide-zinc-100">
-                          {(driftRecords || []).map((dr, idx) => {
+                          {displayedDriftRecords.map((dr, idx) => {
                             const isPrepared = Boolean(dr.prepared);
                             const toggleDriftPrepared = (nextVal) => {
                               if (onUpdateDriftRecord) {
@@ -9653,20 +9831,151 @@
                     ) : (
                       <div className="bg-white border border-zinc-200 rounded-2xl p-10 text-center text-zinc-400 shadow-xs">
                         <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
-                        <h3 className="text-base font-bold text-zinc-800">目前尚無材料飄移申請資料</h3>
+                        <h3 className="text-base font-bold text-zinc-800">
+                          {selectedMaterialCourse === 'all'
+                            ? '目前尚無材料飄移申請資料'
+                            : `目前尚無「${selectedMaterialCourse}」的材料飄移申請`}
+                        </h3>
                         <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-4">
-                          您可以直接在上方「快速複製貼入多行內容導入資料」貼上多筆申請，或點選下方按鈕單筆新增！
+                          您可以點選下方「單筆新增材料飄移」或「多筆新增材料飄移（快速複製貼入多行內容）」來新增資料！
                         </p>
-                        <button
-                          type="button"
-                          onClick={handleOpenAddDrift}
-                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-                        >
-                          <Icon name="plus" className="w-4 h-4" />
-                          <span>單筆新增材料飄移</span>
-                        </button>
+                        <div className="flex items-center justify-center gap-2.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={handleOpenAddDrift}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                          >
+                            <Icon name="plus" className="w-4 h-4 text-orange-400" />
+                            <span>單筆新增材料飄移</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setIsBulkDriftModalOpen(true)}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                          >
+                            <Icon name="fileSpreadsheet" className="w-4 h-4" />
+                            <span>多筆新增材料飄移</span>
+                          </button>
+                        </div>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Bulk Multi-line Import Material Drift Modal */}
+                {isBulkDriftModalOpen && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+                    <div className="bg-white border border-zinc-200 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-6 space-y-4">
+                      <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
+                        <div>
+                          <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                            <Icon name="fileSpreadsheet" className="w-5 h-5 text-orange-600" />
+                            <span>📋 多筆新增材料飄移（快速複製貼入多行內容導入）</span>
+                          </h3>
+                          <p className="text-xs text-zinc-500 mt-0.5">
+                            可直接從 Excel 或 Google 試算表選取多列複製貼上（支援 Tab、逗號 <code className="bg-zinc-100 px-1 rounded">,</code>、直線 <code className="bg-zinc-100 px-1 rounded">|</code> 或空白分隔）
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsBulkDriftModalOpen(false)}
+                          className="text-zinc-400 hover:text-zinc-700 p-1.5 rounded-lg"
+                        >
+                          <Icon name="x" className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      <div className="p-3 bg-orange-50/70 border border-orange-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="text-xs text-zinc-700">
+                          欄位順序：<strong className="text-zinc-900">1.學校 ➔ 2.申請人 ➔ 3.申請的課程 ➔ 4.申請數量 ➔ 5.班級數 ➔ 6.寄件地址 ➔ 7.連絡電話</strong>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBulkDriftText(
+                              '錦和高中\t王小明\t翻轉燈\t30\t2\t新北市中和區錦和路163號\t0912-345-678\n積穗國中\t李華老師\t發光卡片\t25\t1\t新北市中和區民安街66號\t02-22234567'
+                            );
+                          }}
+                          className="text-[11px] font-bold text-orange-700 hover:text-orange-800 bg-white hover:bg-orange-100 border border-orange-300 px-2.5 py-1 rounded-lg transition-colors cursor-pointer shrink-0 self-start sm:self-auto"
+                        >
+                          帶入範例格式
+                        </button>
+                      </div>
+
+                      <textarea
+                        rows={6}
+                        value={bulkDriftText}
+                        onChange={(e) => setBulkDriftText(e.target.value)}
+                        placeholder={`請在此直接貼上多行資料（每行一筆申請），例如：\n錦和高中\t王小明\t翻轉燈\t30\t2\t新北市中和區錦和路163號\t0912-345-678\n中和國中\t陳老師\t發光卡片\t28\t1\t新北市中和區興南路二段\t0922-111-222`}
+                        className="w-full p-3 bg-zinc-50 focus:bg-white border border-zinc-300 rounded-xl text-xs font-mono text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                      />
+
+                      {parsedBulkDriftItems.length > 0 && (
+                        <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2 animate-in fade-in duration-100">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-extrabold text-amber-900">
+                              🔍 即時預覽：已成功解析出 {parsedBulkDriftItems.length} 筆材料飄移資料
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setBulkDriftText('')}
+                              className="text-[11px] font-bold text-zinc-500 hover:text-rose-600 cursor-pointer"
+                            >
+                              清空內容
+                            </button>
+                          </div>
+                          <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                            {parsedBulkDriftItems.map((p, i) => (
+                              <div
+                                key={i}
+                                className="text-[11px] bg-white border border-amber-200/80 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                              >
+                                <span className="font-mono font-bold text-zinc-400">#{i + 1}</span>
+                                <span className="font-bold text-purple-800 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">
+                                  📚 {p.courseName} × {p.quantity} 份
+                                </span>
+                                <span className="font-bold text-zinc-900">{p.school}</span>
+                                <span className="text-zinc-700">({p.applicant} · {p.classCount}班)</span>
+                                {p.shippingAddress && (
+                                  <span className="text-[10px] text-zinc-400">📍 {p.shippingAddress}</span>
+                                )}
+                                {p.phone && (
+                                  <span className="text-[10px] text-zinc-400">📞 {p.phone}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-100">
+                        <button
+                          type="button"
+                          onClick={() => setIsBulkDriftModalOpen(false)}
+                          className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-medium hover:bg-zinc-100 cursor-pointer"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleBulkImportDrift}
+                          disabled={parsedBulkDriftItems.length === 0}
+                          className={`inline-flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                            parsedBulkDriftItems.length > 0
+                              ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-xs cursor-pointer'
+                              : 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed'
+                          }`}
+                        >
+                          <Icon name="plus" className="w-4 h-4" />
+                          <span>
+                            {parsedBulkDriftItems.length > 0
+                              ? `確認導入這 ${parsedBulkDriftItems.length} 筆資料`
+                              : '請先貼上多行資料'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -13969,6 +14278,18 @@
       function MemberCalendarTab({ events, driftRecords = [], member, members = [], savedIds = [], onToggleSave, onUpdateEvent, onShowToast }) {
         const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey' | 'materials'
         const [materialZone, setMaterialZone] = useState('activity'); // 'activity' | 'drift'
+        const [selectedMaterialCourse, setSelectedMaterialCourse] = useState('all');
+        const allMaterialCourses = useMemo(() => {
+          const base = ['翻轉燈', '發光卡片', 'Matrix機器人'];
+          try {
+            const raw = localStorage.getItem('frc10114_material_courses');
+            const parsed = raw ? JSON.parse(raw) : [];
+            if (Array.isArray(parsed)) {
+              return Array.from(new Set([...base, ...parsed.filter(Boolean)]));
+            }
+          } catch (e) {}
+          return base;
+        }, []);
         const [view, setView] = useState('personal');
         const [showPast, setShowPast] = useState(false);
         const [expandedEventId, setExpandedEventId] = useState(null);
@@ -14009,6 +14330,37 @@
         const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared).length;
         const materialEventsCount = activityMaterialsCount + driftTotalCount;
         const unpreparedMaterialEventsCount = unpreparedActivityMaterialsCount + unpreparedDriftCount;
+
+        const courseSummaries = useMemo(
+          () => computeMaterialSummaryByCourse(materialChecklistRows, driftRecords, allMaterialCourses),
+          [materialChecklistRows, driftRecords, allMaterialCourses]
+        );
+        const totalAllUnpreparedQty = useMemo(
+          () => courseSummaries.reduce((sum, c) => sum + c.totalUnpreparedQty, 0),
+          [courseSummaries]
+        );
+        const totalAllPreparedQty = useMemo(
+          () => courseSummaries.reduce((sum, c) => sum + c.totalPreparedQty, 0),
+          [courseSummaries]
+        );
+        const displayedActivityChecklistRows = useMemo(
+          () =>
+            selectedMaterialCourse === 'all'
+              ? materialChecklistRows
+              : materialChecklistRows.filter(r => r.item && String(r.item.name).trim() === selectedMaterialCourse),
+          [materialChecklistRows, selectedMaterialCourse]
+        );
+        const displayedDriftRecords = useMemo(
+          () =>
+            selectedMaterialCourse === 'all'
+              ? driftRecords || []
+              : (driftRecords || []).filter(d => d && String(d.courseName).trim() === selectedMaterialCourse),
+          [driftRecords, selectedMaterialCourse]
+        );
+        const activeSelectedCourseSummary = useMemo(
+          () => courseSummaries.find(c => c.courseName === selectedMaterialCourse) || null,
+          [courseSummaries, selectedMaterialCourse]
+        );
 
         return (
           <div className="space-y-6">
@@ -14504,6 +14856,122 @@
             {/* Sub-view 4: 教材需求表 (學生端唯讀檢視：分為 活動備料區 & 材料飄移區，打勾核准僅限管理員) */}
             {subTab === 'materials' && (
               <div className="space-y-6 animate-in fade-in duration-150">
+                {/* 最上層：各教材待準備數量總覽與切換清單 */}
+                <div className="bg-white border border-zinc-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-extrabold text-zinc-900">
+                        <Icon name="layers" className="w-4 h-4 text-orange-600" />
+                        <span>各教材待準備數量總覽（點擊按鈕切換不同教材）</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        統計「活動備料區」與「材料飄移區」尚未勾選完成的待準備材料總數，點選下方教材按鈕即可篩選檢視。
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                        總待準備材料：{courseSummaries.reduce((acc, c) => acc + c.totalUnpreparedQty, 0)} 份
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 教材切換按鈕列 */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMaterialCourse('all')}
+                      className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                        selectedMaterialCourse === 'all'
+                          ? 'bg-zinc-900 text-white border-zinc-900 shadow-xs'
+                          : 'bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100'
+                      }`}
+                    >
+                      <span>全部教材總覽</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
+                          selectedMaterialCourse === 'all'
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        待準備 {courseSummaries.reduce((acc, c) => acc + c.totalUnpreparedQty, 0)} 份
+                      </span>
+                    </button>
+
+                    {courseSummaries.map(cs => {
+                      const isSelected = selectedMaterialCourse === cs.courseName;
+                      return (
+                        <button
+                          key={cs.courseName}
+                          type="button"
+                          onClick={() => setSelectedMaterialCourse(cs.courseName)}
+                          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-purple-700 text-white border-purple-700 shadow-xs'
+                              : 'bg-white text-zinc-800 border-zinc-200 hover:border-purple-300 hover:bg-purple-50/40'
+                          }`}
+                        >
+                          <span>📚 {cs.courseName}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              isSelected
+                                ? 'bg-white text-purple-800'
+                                : cs.totalUnpreparedQty > 0
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-emerald-100 text-emerald-700'
+                            }`}
+                          >
+                            待準備 {cs.totalUnpreparedQty} 份
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 選中教材或全部教材的待準備明細卡片 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
+                    {(selectedMaterialCourse === 'all'
+                      ? courseSummaries
+                      : courseSummaries.filter(c => c.courseName === selectedMaterialCourse)
+                    ).map(cs => (
+                      <div
+                        key={cs.courseName}
+                        onClick={() =>
+                          setSelectedMaterialCourse(
+                            selectedMaterialCourse === cs.courseName ? 'all' : cs.courseName
+                          )
+                        }
+                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                          selectedMaterialCourse === cs.courseName
+                            ? 'bg-purple-50/70 border-purple-300 ring-1 ring-purple-200'
+                            : 'bg-zinc-50/70 border-zinc-200 hover:bg-zinc-100/70'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-black text-zinc-900 truncate flex items-center gap-1">
+                            <span>📚 {cs.courseName}</span>
+                          </div>
+                          <div className="text-[11px] text-zinc-500 mt-0.5 flex flex-wrap items-center gap-x-2">
+                            <span>活動待備：{cs.activityUnpreparedQty} 份</span>
+                            <span>·</span>
+                            <span>飄移待備：{cs.driftUnpreparedQty} 份</span>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="text-[10px] font-bold text-zinc-400 block">待準備總數</span>
+                          <span
+                            className={`text-base font-black ${
+                              cs.totalUnpreparedQty > 0 ? 'text-amber-600' : 'text-emerald-600'
+                            }`}
+                          >
+                            {cs.totalUnpreparedQty} 份
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Zone Switcher: 活動備料區 vs 材料飄移區 */}
                 <div className="bg-white border border-zinc-200 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -14572,7 +15040,10 @@
                         <div>
                           <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
                             <Icon name="package" className="w-4 h-4 text-orange-600" />
-                            <span>活動備料區 — 團隊活動教材需求總表</span>
+                            <span>
+                              活動備料區 — 團隊活動教材需求總表
+                              {selectedMaterialCourse !== 'all' ? `（篩選教材：${selectedMaterialCourse}）` : ''}
+                            </span>
                           </div>
                           <p className="text-xs text-zinc-600">
                             此處彙整各場活動所需準備的課程教材與份數（人數）。隊員可於此查看備料需求，備料完成之「打勾核准」僅限管理員教練操作。
@@ -14583,32 +15054,32 @@
                           <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">待備料項目</span>
                             <span className="text-lg font-black text-amber-600">
-                              {unpreparedActivityMaterialsCount}
+                              {displayedActivityChecklistRows.filter(r => !r.item.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
                             <span className="text-lg font-black text-emerald-600">
-                              {activityMaterialsCount - unpreparedActivityMaterialsCount}
+                              {displayedActivityChecklistRows.filter(r => r.item.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">累計需求總份數</span>
                             <span className="text-lg font-black text-zinc-900">
-                              {materialChecklistRows.reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)} 份
+                              {displayedActivityChecklistRows.reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)} 份
                             </span>
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    {materialChecklistRows.length > 0 ? (
+                    {displayedActivityChecklistRows.length > 0 ? (
                       <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
                         <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2">
                             <Icon name="checkSquare" className="w-4 h-4 text-orange-600" />
                             <h3 className="text-sm font-black text-zinc-900">
-                              活動備料狀態一覽（共 {materialChecklistRows.length} 項教材需求）
+                              活動備料狀態一覽（共 {displayedActivityChecklistRows.length} 項教材需求）
                             </h3>
                           </div>
                           <span className="text-[11px] font-bold text-zinc-500">
@@ -14617,7 +15088,7 @@
                         </div>
 
                         <div className="divide-y divide-zinc-100">
-                          {materialChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
+                          {displayedActivityChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
                             const isPrepared = Boolean(item.prepared);
                             return (
                               <div
@@ -14727,7 +15198,10 @@
                         <div>
                           <div className="flex items-center gap-2 text-xs font-bold text-purple-900 mb-1">
                             <Icon name="package" className="w-4 h-4 text-purple-600" />
-                            <span>材料飄移區 — 跨校課程教材申請與備料總表</span>
+                            <span>
+                              材料飄移區 — 跨校課程教材申請與備料總表
+                              {selectedMaterialCourse !== 'all' ? `（篩選教材：${selectedMaterialCourse}）` : ''}
+                            </span>
                           </div>
                           <p className="text-xs text-zinc-600">
                             此處列出各校申請之材料飄移課程與所需數量，供隊員協助備料查閱（打勾確認僅限管理員操作）。
@@ -14738,32 +15212,32 @@
                           <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">待備料申請</span>
                             <span className="text-lg font-black text-amber-600">
-                              {unpreparedDriftCount}
+                              {displayedDriftRecords.filter(d => !d.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
                             <span className="text-lg font-black text-emerald-600">
-                              {driftTotalCount - unpreparedDriftCount}
+                              {displayedDriftRecords.filter(d => d.prepared).length}
                             </span>
                           </div>
                           <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
                             <span className="text-[10px] text-zinc-500 font-bold block">累計申請總數</span>
                             <span className="text-lg font-black text-zinc-900">
-                              {(driftRecords || []).reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份
+                              {displayedDriftRecords.reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份
                             </span>
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    {driftTotalCount > 0 ? (
+                    {displayedDriftRecords.length > 0 ? (
                       <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
                         <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2">
                             <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
                             <h3 className="text-sm font-black text-zinc-900">
-                              材料飄移備料狀態一覽（共 {driftTotalCount} 筆申請）
+                              材料飄移備料狀態一覽（共 {displayedDriftRecords.length} 筆申請）
                             </h3>
                           </div>
                           <span className="text-[11px] font-bold text-zinc-500">
@@ -14772,7 +15246,7 @@
                         </div>
 
                         <div className="divide-y divide-zinc-100">
-                          {(driftRecords || []).map((dr, idx) => {
+                          {displayedDriftRecords.map((dr, idx) => {
                             const isPrepared = Boolean(dr.prepared);
                             return (
                               <div
