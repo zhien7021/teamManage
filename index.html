@@ -3375,19 +3375,25 @@
           return basicDiff || deptsDiff;
         }, [draftMember, originalMember]);
 
-        // Auto sorted events by date + startTime ascending (NEAREST FIRST)
+        // Auto sorted events by date + startTime ascending (NEAREST FIRST), excluding material drift items
         const sortedEvents = useMemo(() => {
           return [...events]
+            .filter(ev => !ev || !ev.isMaterialDrift)
             .map(ev => ({
               ...ev,
               type: ev.type ? ev.type.replace(/程式設計/g, '程式控制') : ev.type,
               departments: Array.isArray(ev.departments)
                 ? ev.departments.map(d => typeof d === 'string' ? d.replace(/程式設計/g, '程式控制') : d)
-                : ev.departments
+                : (ev.departments || [])
             }))
             .sort((a, b) =>
               `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`)
             );
+        }, [events]);
+
+        // Material Drift / Outreach Shipping Requests stored inside events for zero-config Cloud Sync
+        const materialDriftRecords = useMemo(() => {
+          return events.filter(ev => ev && ev.isMaterialDrift);
         }, [events]);
 
         // Auto sorted members by ID / number ascending
@@ -5377,6 +5383,7 @@
               {currentRole === 'admin' && activeTab === 'calendar' && (
                 <AdminCalendarTab
                   events={sortedEvents}
+                  driftRecords={materialDriftRecords}
                   members={members}
                   onShowToast={showToast}
                   onAddEvent={(ev) => {
@@ -5401,6 +5408,41 @@
                       try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
                       syncToCloud({ events: next });
                       showToast('活動已刪除', `已自隊伍行事曆移除「${name}」`, 'info');
+                    }
+                  }}
+                  onAddDriftRecords={(newItems) => {
+                    const list = Array.isArray(newItems) ? newItems : [newItems];
+                    const nowTs = Date.now();
+                    const created = list.map((item, idx) => ({
+                      ...item,
+                      id: item.id || `drift_${nowTs}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+                      isMaterialDrift: true,
+                      departments: [],
+                      attendees: [],
+                    }));
+                    const next = [...events, ...created];
+                    setEvents(next);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ events: next });
+                    if (created.length > 1) {
+                      showToast('多行批次導入成功！', `已成功導入 ${created.length} 筆材料飄移備料資料`, 'success');
+                    } else if (created.length === 1) {
+                      showToast('材料飄移新增成功', `已新增「${created[0].school} - ${created[0].courseName}」備料項目`, 'success');
+                    }
+                  }}
+                  onUpdateDriftRecord={(updatedItem) => {
+                    const next = events.map(e => e.id === updatedItem.id ? { ...e, ...updatedItem, isMaterialDrift: true } : e);
+                    setEvents(next);
+                    try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                    syncToCloud({ events: next });
+                  }}
+                  onDeleteDriftRecord={(id, label) => {
+                    if (window.confirm(`確定要刪除「${label}」這筆材料飄移紀錄嗎？`)) {
+                      const next = events.filter(e => e.id !== id);
+                      setEvents(next);
+                      try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
+                      syncToCloud({ events: next });
+                      showToast('材料飄移紀錄已刪除', `已移除「${label}」`, 'info');
                     }
                   }}
                 />
@@ -5535,6 +5577,7 @@
               {currentRole === 'member' && activeTab === 'calendar' && (
                 <MemberCalendarTab
                   events={sortedEvents}
+                  driftRecords={materialDriftRecords}
                   member={currentMember}
                   members={members}
                   savedIds={customSavedEventIds}
@@ -5638,6 +5681,7 @@
               {currentRole === 'parent' && activeTab === 'calendar' && (
                 <MemberCalendarTab
                   events={sortedEvents}
+                  driftRecords={materialDriftRecords}
                   member={matchedParentStudent}
                   members={members}
                   savedIds={customSavedEventIds}
@@ -7905,14 +7949,106 @@
         ];
       }
 
+      // Helper: Parse multi-line pasted text for Material Drift (材料飄移區)
+      // Expected column order: 學校 | 申請人 | 申請的課程 | 申請數量 | 班級數 | 寄件地址 | 連絡電話
+      function parseMultiLineDriftText(rawText) {
+        if (!rawText || !String(rawText).trim()) return [];
+        const lines = String(rawText)
+          .split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(Boolean);
+
+        const results = [];
+        const todayStr = getTodayDateStr();
+
+        lines.forEach((line, idx) => {
+          // Skip header line if detected
+          if (
+            idx === 0 &&
+            line.includes('學校') &&
+            (line.includes('申請人') || line.includes('課程') || line.includes('數量') || line.includes('地址'))
+          ) {
+            return;
+          }
+
+          let cols = [];
+          if (line.includes('\t')) {
+            cols = line.split('\t').map(c => c.trim());
+          } else if (line.includes('|')) {
+            cols = line.split('|').map(c => c.trim());
+          } else if (line.includes(',') || line.includes('，')) {
+            cols = line.split(/[,，]/).map(c => c.trim());
+          } else {
+            cols = line.split(/\s+/).map(c => c.trim());
+          }
+
+          // If pasted from Google Form sheet where first column is a date/timestamp and there are 8+ columns
+          if (cols.length >= 8 && (/^\d{4}[-/]/.test(cols[0]) || /^(上午|下午)/.test(cols[0]))) {
+            cols = cols.slice(1);
+          }
+
+          if (cols.length < 2) return;
+
+          const school = cols[0] || '未填寫學校';
+          const applicant = cols[1] || '未填寫申請人';
+          const courseName = cols[2] || '翻轉燈';
+          const rawQty = cols[3] !== undefined ? cols[3] : '1';
+          const quantity = Math.max(1, parseInt(String(rawQty).replace(/[^\d]/g, ''), 10) || 1);
+          const rawClassCount = cols[4] !== undefined ? cols[4] : '1';
+          const classCount = String(rawClassCount).replace(/班$/, '').trim() || '1';
+          const shippingAddress = cols[5] || '';
+          const phone = cols.slice(6).join(' ').trim() || '';
+
+          results.push({
+            school,
+            applicant,
+            courseName,
+            quantity,
+            classCount,
+            shippingAddress,
+            phone,
+            prepared: false,
+            createdAt: todayStr,
+          });
+        });
+
+        return results;
+      }
+
       // --- 5.2 ADMIN CALENDAR TAB WITH SUB-CATEGORIES (活動表 & 月行事曆 & 調查 & 教材需求表) ---
-      function AdminCalendarTab({ events, members = [], onAddEvent, onUpdateEvent, onDeleteEvent, onShowToast }) {
+      function AdminCalendarTab({
+        events,
+        driftRecords = [],
+        members = [],
+        onAddEvent,
+        onUpdateEvent,
+        onDeleteEvent,
+        onAddDriftRecords,
+        onUpdateDriftRecord,
+        onDeleteDriftRecord,
+        onShowToast,
+      }) {
         const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey' | 'materials'
+        const [materialZone, setMaterialZone] = useState('activity'); // 'activity' (活動備料區) | 'drift' (材料飄移區)
         const [isAddOpen, setIsAddOpen] = useState(false);
         const [editingEvent, setEditingEvent] = useState(null);
         const [deptFilter, setDeptFilter] = useState('all');
         const [typeFilter, setTypeFilter] = useState('all');
         const [showPast, setShowPast] = useState(false);
+
+        // Material Drift (材料飄移區) State
+        const [isDriftModalOpen, setIsDriftModalOpen] = useState(false);
+        const [editingDrift, setEditingDrift] = useState(null);
+        const [driftSchool, setDriftSchool] = useState('');
+        const [driftApplicant, setDriftApplicant] = useState('');
+        const [driftCourseSelect, setDriftCourseSelect] = useState('翻轉燈');
+        const [driftCustomCourse, setDriftCustomCourse] = useState('');
+        const [driftQuantity, setDriftQuantity] = useState('');
+        const [driftClassCount, setDriftClassCount] = useState('');
+        const [driftAddress, setDriftAddress] = useState('');
+        const [driftPhone, setDriftPhone] = useState('');
+        const [bulkDriftText, setBulkDriftText] = useState('');
+        const parsedBulkDriftItems = useMemo(() => parseMultiLineDriftText(bulkDriftText), [bulkDriftText]);
 
         // Survey State
         const [manualAddEventId, setManualAddEventId] = useState(null);
@@ -7953,8 +8089,125 @@
               fromEvents.push(String(ev.materialName).trim());
             }
           });
+          (driftRecords || []).forEach(dr => {
+            if (dr && dr.courseName && String(dr.courseName).trim()) {
+              fromEvents.push(String(dr.courseName).trim());
+            }
+          });
           return Array.from(new Set([...savedMaterialCourses, ...fromEvents]));
-        }, [savedMaterialCourses, events]);
+        }, [savedMaterialCourses, events, driftRecords]);
+
+        const handleOpenAddDrift = () => {
+          setEditingDrift(null);
+          setDriftSchool('');
+          setDriftApplicant('');
+          setDriftCourseSelect(allMaterialCourses[0] || '翻轉燈');
+          setDriftCustomCourse('');
+          setDriftQuantity('');
+          setDriftClassCount('1');
+          setDriftAddress('');
+          setDriftPhone('');
+          setIsDriftModalOpen(true);
+        };
+
+        const handleOpenEditDrift = (dr) => {
+          setEditingDrift(dr);
+          setDriftSchool(dr.school || '');
+          setDriftApplicant(dr.applicant || '');
+          const cName = dr.courseName ? String(dr.courseName).trim() : '';
+          if (cName && allMaterialCourses.includes(cName)) {
+            setDriftCourseSelect(cName);
+            setDriftCustomCourse('');
+          } else if (cName) {
+            setDriftCourseSelect('__custom__');
+            setDriftCustomCourse(cName);
+          } else {
+            setDriftCourseSelect(allMaterialCourses[0] || '翻轉燈');
+            setDriftCustomCourse('');
+          }
+          setDriftQuantity(dr.quantity ? String(dr.quantity) : '');
+          setDriftClassCount(dr.classCount ? String(dr.classCount) : '1');
+          setDriftAddress(dr.shippingAddress || '');
+          setDriftPhone(dr.phone || '');
+          setIsDriftModalOpen(true);
+        };
+
+        const handleSubmitDrift = (e) => {
+          e.preventDefault();
+          if (!driftSchool.trim() || !driftApplicant.trim()) {
+            if (onShowToast) onShowToast('請填寫完整資訊', '學校與申請人為必填欄位', 'warning');
+            return;
+          }
+          const finalCourse = driftCourseSelect === '__custom__' ? driftCustomCourse.trim() : driftCourseSelect.trim();
+          if (!finalCourse) {
+            if (onShowToast) onShowToast('請填寫申請課程', '請選擇或輸入申請的課程名稱', 'warning');
+            return;
+          }
+          if (!savedMaterialCourses.includes(finalCourse)) {
+            const nextCourses = Array.from(new Set([...savedMaterialCourses, finalCourse]));
+            setSavedMaterialCourses(nextCourses);
+            try {
+              localStorage.setItem('frc10114_material_courses', JSON.stringify(nextCourses));
+            } catch (err) {}
+          }
+          const parsedQty = Math.max(1, parseInt(driftQuantity, 10) || 1);
+          const cleanClassCount = String(driftClassCount || '1').replace(/班$/, '').trim() || '1';
+
+          if (editingDrift) {
+            if (onUpdateDriftRecord) {
+              onUpdateDriftRecord({
+                ...editingDrift,
+                school: driftSchool.trim(),
+                applicant: driftApplicant.trim(),
+                courseName: finalCourse,
+                quantity: parsedQty,
+                classCount: cleanClassCount,
+                shippingAddress: driftAddress.trim(),
+                phone: driftPhone.trim(),
+              });
+              if (onShowToast) onShowToast('已更新材料飄移紀錄', `「${driftSchool.trim()} - ${finalCourse}」已儲存`, 'success');
+            }
+          } else {
+            if (onAddDriftRecords) {
+              onAddDriftRecords([
+                {
+                  school: driftSchool.trim(),
+                  applicant: driftApplicant.trim(),
+                  courseName: finalCourse,
+                  quantity: parsedQty,
+                  classCount: cleanClassCount,
+                  shippingAddress: driftAddress.trim(),
+                  phone: driftPhone.trim(),
+                  prepared: false,
+                  createdAt: getTodayDateStr(),
+                },
+              ]);
+            }
+          }
+          setIsDriftModalOpen(false);
+          setEditingDrift(null);
+        };
+
+        const handleBulkImportDrift = () => {
+          if (parsedBulkDriftItems.length === 0) {
+            if (onShowToast) onShowToast('無有效資料可導入', '請先貼上至少一行包含「學校、申請人、申請的課程、申請數量...」的內容', 'warning');
+            return;
+          }
+          const newCourseNames = parsedBulkDriftItems
+            .map(item => item.courseName)
+            .filter(n => n && !savedMaterialCourses.includes(n));
+          if (newCourseNames.length > 0) {
+            const nextCourses = Array.from(new Set([...savedMaterialCourses, ...newCourseNames]));
+            setSavedMaterialCourses(nextCourses);
+            try {
+              localStorage.setItem('frc10114_material_courses', JSON.stringify(nextCourses));
+            } catch (err) {}
+          }
+          if (onAddDriftRecords) {
+            onAddDriftRecords(parsedBulkDriftItems);
+          }
+          setBulkDriftText('');
+        };
 
         const createMaterialRow = (defaultCourse = '翻轉燈') => ({
           id: `mat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -8164,8 +8417,12 @@
           });
           return rows;
         }, [materialEvents]);
-        const materialEventsCount = materialChecklistRows.length;
-        const unpreparedMaterialEventsCount = materialChecklistRows.filter(r => !r.item.prepared).length;
+        const activityMaterialsCount = materialChecklistRows.length;
+        const unpreparedActivityMaterialsCount = materialChecklistRows.filter(r => !r.item.prepared).length;
+        const driftTotalCount = (driftRecords || []).length;
+        const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared).length;
+        const materialEventsCount = activityMaterialsCount + driftTotalCount;
+        const unpreparedMaterialEventsCount = unpreparedActivityMaterialsCount + unpreparedDriftCount;
 
         return (
           <div className="space-y-6">
@@ -8806,219 +9063,763 @@
               </div>
             )}
 
-            {/* Sub-Category 4: 教材需求表 (勾選管理教材準備狀態) */}
+            {/* Sub-Category 4: 教材需求表 (分為：活動備料區 & 材料飄移區) */}
             {subTab === 'materials' && (
               <div className="space-y-6 animate-in fade-in duration-150">
-                {/* Material Requirements Summary Banner */}
-                <div className="bg-gradient-to-r from-amber-50/70 via-orange-50/40 to-white border border-amber-200 rounded-xl p-5 shadow-xs">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
-                        <Icon name="package" className="w-4 h-4 text-orange-600" />
-                        <span>活動教材與備料需求總表</span>
-                      </div>
-                      <p className="text-xs text-zinc-600">
-                        凡在發布或編輯活動時勾選「是否需準備教材」之各教材項目將自動彙整於此。直接勾選前方核取方塊代表「已經準備完成」，未勾選代表「還沒備料完畢」。
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                      <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
-                        <span className="text-[10px] text-zinc-500 font-bold block">待備料項目</span>
-                        <span className="text-lg font-black text-amber-600">
-                          {unpreparedMaterialEventsCount}
+                {/* Zone Switcher: 活動備料區 vs 材料飄移區 */}
+                <div className="bg-white border border-zinc-200 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-extrabold text-zinc-700 px-2">選擇教材備料分區：</span>
+                    <div className="inline-flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200 text-xs font-bold gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setMaterialZone('activity')}
+                        className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all cursor-pointer ${
+                          materialZone === 'activity'
+                            ? 'bg-orange-600 text-white shadow-xs'
+                            : 'text-zinc-600 hover:text-zinc-900'
+                        }`}
+                      >
+                        <Icon name="calendar" className="w-3.5 h-3.5" />
+                        <span>活動備料區</span>
+                        <span
+                          className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                            materialZone === 'activity'
+                              ? 'bg-white text-orange-700'
+                              : unpreparedActivityMaterialsCount > 0
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-zinc-300 text-zinc-700'
+                          }`}
+                        >
+                          {activityMaterialsCount}
                         </span>
-                      </div>
-                      <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
-                        <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
-                        <span className="text-lg font-black text-emerald-600">
-                          {materialEventsCount - unpreparedMaterialEventsCount}
-                        </span>
-                      </div>
-                      <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
-                        <span className="text-[10px] text-zinc-500 font-bold block">累計需求總份數</span>
-                        <span className="text-lg font-black text-zinc-900">
-                          {materialChecklistRows.reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)} 份
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Material Requirements Checklist Card */}
-                {materialChecklistRows.length > 0 ? (
-                  <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
-                    <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Icon name="checkSquare" className="w-4 h-4 text-orange-600" />
-                        <h3 className="text-sm font-black text-zinc-900">
-                          教材準備核對清單（共 {materialChecklistRows.length} 項教材需求）
-                        </h3>
-                      </div>
+                      </button>
 
                       <button
                         type="button"
-                        onClick={() => {
-                          exportToCSV(
-                            `FRC10114_教材需求表_${getTodayDateStr()}.csv`,
-                            ['備料狀態', '活動名稱', '教材/課程內容', '需求份數(人數)', '活動日期', '時間', '適用組別', '地點', '說明備註'],
-                            materialChecklistRows.map(({ ev, item }) => [
-                              item.prepared ? '已準備完成' : '尚未備料完畢',
-                              ev.name || '',
-                              item.name || '未指定教材',
-                              `${item.count || 0} 份`,
-                              ev.date || '',
-                              `${ev.startTime || ''}-${ev.endTime || ''}`,
-                              (ev.departments || []).join('、'),
-                              ev.location || '',
-                              ev.description || ''
-                            ])
-                          );
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 shadow-2xs transition-colors cursor-pointer self-start sm:self-auto"
+                        onClick={() => setMaterialZone('drift')}
+                        className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all cursor-pointer ${
+                          materialZone === 'drift'
+                            ? 'bg-orange-600 text-white shadow-xs'
+                            : 'text-zinc-600 hover:text-zinc-900'
+                        }`}
                       >
-                        <Icon name="download" className="w-3.5 h-3.5 text-orange-600" />
-                        <span>匯出教材需求表 (CSV)</span>
+                        <Icon name="package" className="w-3.5 h-3.5" />
+                        <span>材料飄移區</span>
+                        <span
+                          className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                            materialZone === 'drift'
+                              ? 'bg-white text-orange-700'
+                              : unpreparedDriftCount > 0
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-zinc-300 text-zinc-700'
+                          }`}
+                        >
+                          {driftTotalCount}
+                        </span>
                       </button>
                     </div>
-
-                    <div className="divide-y divide-zinc-100">
-                      {materialChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
-                        const isPrepared = Boolean(item.prepared);
-                        const handleToggleItemPrepared = (nextPrepared) => {
-                          if (!onUpdateEvent) return;
-                          const currentItems = getEventMaterialItems(ev);
-                          const nextItems = currentItems.map((it, i) =>
-                            i === itemIdx ? { ...it, prepared: nextPrepared } : it
-                          );
-                          const allPrepared = nextItems.length > 0 && nextItems.every(it => it.prepared);
-                          onUpdateEvent({
-                            ...ev,
-                            materialItems: nextItems,
-                            materialPrepared: allPrepared,
-                          });
-                        };
-
-                        return (
-                          <div
-                            key={`${ev.id}_${item.id || itemIdx}`}
-                            onClick={() => handleToggleItemPrepared(!isPrepared)}
-                            className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all cursor-pointer ${
-                              isPrepared
-                                ? 'bg-emerald-50/30 hover:bg-emerald-50/60'
-                                : 'bg-white hover:bg-orange-50/40'
-                            }`}
-                          >
-                            <div className="flex items-start sm:items-center gap-3.5 flex-1">
-                              <input
-                                type="checkbox"
-                                checked={isPrepared}
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleItemPrepared(e.target.checked);
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 focus:ring-emerald-500 cursor-pointer shrink-0"
-                              />
-
-                              <div className="space-y-1 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-mono text-xs font-bold text-zinc-400">
-                                    #{idx + 1}
-                                  </span>
-                                  <span
-                                    className={`text-sm sm:text-base font-black tracking-tight ${
-                                      isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
-                                    }`}
-                                  >
-                                    {ev.name}
-                                  </span>
-                                  {totalItemsInEv > 1 && (
-                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
-                                      項目 {itemIdx + 1}/{totalItemsInEv}
-                                    </span>
-                                  )}
-                                  {item.name && (
-                                    <span className="text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300">
-                                      📚 教材：{item.name}
-                                    </span>
-                                  )}
-                                  <span
-                                    className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
-                                      isPrepared
-                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                        : 'bg-orange-100 text-orange-800 border-orange-300'
-                                    }`}
-                                  >
-                                    需準備：{item.count || 0} 份 (人)
-                                  </span>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
-                                  <span className="font-semibold text-zinc-700 flex items-center gap-1">
-                                    <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
-                                    {ev.date}
-                                  </span>
-                                  <span className="font-mono flex items-center gap-1">
-                                    <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
-                                    {ev.startTime} - {ev.endTime}
-                                  </span>
-                                  <span className="text-[11px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200 font-medium">
-                                    {ev.type}
-                                  </span>
-                                  {(ev.departments || []).map(d => (
-                                    <span key={d} className="text-[10px] px-1.5 py-0.5 bg-zinc-50 text-zinc-600 rounded border border-zinc-200">
-                                      {d}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 self-end sm:self-center shrink-0" onClick={(e) => e.stopPropagation()}>
-                              <span
-                                className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
-                                  isPrepared
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                    : 'bg-amber-50 text-amber-800 border-amber-300'
-                                }`}
-                              >
-                                <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
-                                <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
-                              </span>
-
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEdit(ev)}
-                                className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
-                                title="編輯活動與教材份數"
-                              >
-                                <Icon name="edit" className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
                   </div>
-                ) : (
-                  <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
-                    <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
-                    <h3 className="text-base font-bold text-zinc-800">目前尚無需要準備教材的活動</h3>
-                    <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-5">
-                      當您在發布新活動或編輯現有活動時，勾選「是否需準備教材」並填寫所需份數，系統就會自動將活動與份數彙整至本頁供您勾選核對備料進度。
-                    </p>
+
+                  {materialZone === 'drift' && (
                     <button
                       type="button"
-                      onClick={() => {
-                        handleOpenAdd();
-                        setNeedsMaterials(true);
-                      }}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                      onClick={handleOpenAddDrift}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
                     >
-                      <Icon name="plus" className="w-4 h-4" />
-                      <span>發布新活動 (設定教材需求)</span>
+                      <Icon name="plus" className="w-4 h-4 text-orange-400" />
+                      <span>單筆新增材料飄移</span>
                     </button>
+                  )}
+                </div>
+
+                {/* ZONE A: 活動備料區 */}
+                {materialZone === 'activity' && (
+                  <div className="space-y-6 animate-in fade-in duration-150">
+                    {/* Material Requirements Summary Banner */}
+                    <div className="bg-gradient-to-r from-amber-50/70 via-orange-50/40 to-white border border-amber-200 rounded-xl p-5 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
+                            <Icon name="package" className="w-4 h-4 text-orange-600" />
+                            <span>活動備料區 — 團隊活動教材需求總表</span>
+                          </div>
+                          <p className="text-xs text-zinc-600">
+                            凡在發布或編輯活動時勾選「是否需準備教材」之各教材項目將自動彙整於此。直接勾選前方核取方塊代表「已經準備完成」，未勾選代表「還沒備料完畢」。
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">待備料項目</span>
+                            <span className="text-lg font-black text-amber-600">
+                              {unpreparedActivityMaterialsCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
+                            <span className="text-lg font-black text-emerald-600">
+                              {activityMaterialsCount - unpreparedActivityMaterialsCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">累計需求總份數</span>
+                            <span className="text-lg font-black text-zinc-900">
+                              {materialChecklistRows.reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)} 份
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Material Requirements Checklist Card */}
+                    {materialChecklistRows.length > 0 ? (
+                      <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
+                        <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Icon name="checkSquare" className="w-4 h-4 text-orange-600" />
+                            <h3 className="text-sm font-black text-zinc-900">
+                              活動備料核對清單（共 {materialChecklistRows.length} 項教材需求）
+                            </h3>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              exportToCSV(
+                                `FRC10114_活動備料需求表_${getTodayDateStr()}.csv`,
+                                ['備料狀態', '活動名稱', '教材/課程內容', '需求份數(人數)', '活動日期', '時間', '適用組別', '地點', '說明備註'],
+                                materialChecklistRows.map(({ ev, item }) => [
+                                  item.prepared ? '已準備完成' : '尚未備料完畢',
+                                  ev.name || '',
+                                  item.name || '未指定教材',
+                                  `${item.count || 0} 份`,
+                                  ev.date || '',
+                                  `${ev.startTime || ''}-${ev.endTime || ''}`,
+                                  (ev.departments || []).join('、'),
+                                  ev.location || '',
+                                  ev.description || ''
+                                ])
+                              );
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 shadow-2xs transition-colors cursor-pointer self-start sm:self-auto"
+                          >
+                            <Icon name="download" className="w-3.5 h-3.5 text-orange-600" />
+                            <span>匯出活動備料表 (CSV)</span>
+                          </button>
+                        </div>
+
+                        <div className="divide-y divide-zinc-100">
+                          {materialChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
+                            const isPrepared = Boolean(item.prepared);
+                            const handleToggleItemPrepared = (nextPrepared) => {
+                              if (!onUpdateEvent) return;
+                              const currentItems = getEventMaterialItems(ev);
+                              const nextItems = currentItems.map((it, i) =>
+                                i === itemIdx ? { ...it, prepared: nextPrepared } : it
+                              );
+                              const allPrepared = nextItems.length > 0 && nextItems.every(it => it.prepared);
+                              onUpdateEvent({
+                                ...ev,
+                                materialItems: nextItems,
+                                materialPrepared: allPrepared,
+                              });
+                            };
+
+                            return (
+                              <div
+                                key={`${ev.id}_${item.id || itemIdx}`}
+                                onClick={() => handleToggleItemPrepared(!isPrepared)}
+                                className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all cursor-pointer ${
+                                  isPrepared
+                                    ? 'bg-emerald-50/30 hover:bg-emerald-50/60'
+                                    : 'bg-white hover:bg-orange-50/40'
+                                }`}
+                              >
+                                <div className="flex items-start sm:items-center gap-3.5 flex-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={isPrepared}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleItemPrepared(e.target.checked);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                  />
+
+                                  <div className="space-y-1 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-mono text-xs font-bold text-zinc-400">
+                                        #{idx + 1}
+                                      </span>
+                                      <span
+                                        className={`text-sm sm:text-base font-black tracking-tight ${
+                                          isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
+                                        }`}
+                                      >
+                                        {ev.name}
+                                      </span>
+                                      {totalItemsInEv > 1 && (
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
+                                          項目 {itemIdx + 1}/{totalItemsInEv}
+                                        </span>
+                                      )}
+                                      {item.name && (
+                                        <span className="text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300">
+                                          📚 教材：{item.name}
+                                        </span>
+                                      )}
+                                      <span
+                                        className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
+                                          isPrepared
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : 'bg-orange-100 text-orange-800 border-orange-300'
+                                        }`}
+                                      >
+                                        需準備：{item.count || 0} 份 (人)
+                                      </span>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                                      <span className="font-semibold text-zinc-700 flex items-center gap-1">
+                                        <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
+                                        {ev.date}
+                                      </span>
+                                      <span className="font-mono flex items-center gap-1">
+                                        <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
+                                        {ev.startTime} - {ev.endTime}
+                                      </span>
+                                      <span className="text-[11px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200 font-medium">
+                                        {ev.type}
+                                      </span>
+                                      {(ev.departments || []).map(d => (
+                                        <span key={d} className="text-[10px] px-1.5 py-0.5 bg-zinc-50 text-zinc-600 rounded border border-zinc-200">
+                                          {d}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <span
+                                    className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                      isPrepared
+                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                        : 'bg-amber-50 text-amber-800 border-amber-300'
+                                    }`}
+                                  >
+                                    <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
+                                    <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                  </span>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEdit(ev)}
+                                    className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
+                                    title="編輯活動與教材份數"
+                                  >
+                                    <Icon name="edit" className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
+                        <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
+                        <h3 className="text-base font-bold text-zinc-800">目前尚無需要準備教材的活動</h3>
+                        <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-5">
+                          當您在發布新活動或編輯現有活動時，勾選「是否需準備教材」並填寫所需份數，系統就會自動將活動與份數彙整至本頁供您勾選核對備料進度。
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleOpenAdd();
+                            setNeedsMaterials(true);
+                          }}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                        >
+                          <Icon name="plus" className="w-4 h-4" />
+                          <span>發布新活動 (設定教材需求)</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ZONE B: 材料飄移區 */}
+                {materialZone === 'drift' && (
+                  <div className="space-y-6 animate-in fade-in duration-150">
+                    {/* Drift Summary Banner */}
+                    <div className="bg-gradient-to-r from-purple-50/70 via-amber-50/40 to-white border border-purple-200 rounded-xl p-5 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2 text-xs font-bold text-purple-900 mb-1">
+                            <Icon name="package" className="w-4 h-4 text-purple-600" />
+                            <span>材料飄移區 — 跨校課程教材申請與寄送備料總表</span>
+                          </div>
+                          <p className="text-xs text-zinc-600">
+                            管理各校申請之教材課程與數量（含學校、申請人、申請課程、數量、班級數、寄件地址、連絡電話）。備料完成後可直接打勾確認！
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">待備料申請</span>
+                            <span className="text-lg font-black text-amber-600">
+                              {unpreparedDriftCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
+                            <span className="text-lg font-black text-emerald-600">
+                              {driftTotalCount - unpreparedDriftCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">累計申請總數</span>
+                            <span className="text-lg font-black text-zinc-900">
+                              {(driftRecords || []).reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Multi-line Quick Copy-Paste Import Box */}
+                    <div className="bg-white border border-orange-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <h3 className="text-sm font-black text-zinc-900 flex items-center gap-1.5">
+                            <Icon name="fileSpreadsheet" className="w-4 h-4 text-orange-600" />
+                            <span>快速複製貼入多行內容導入資料</span>
+                          </h3>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">
+                            可直接從 Excel / Google 試算表選取多列複製貼上（支援 Tab、逗號 <code className="bg-zinc-100 px-1 rounded">,</code>、直線 <code className="bg-zinc-100 px-1 rounded">|</code> 或空白分隔）。
+                            欄位順序：<strong className="text-zinc-800">學校、申請人、申請的課程、申請數量、班級數、寄件地址、連絡電話</strong>
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBulkDriftText(
+                              '錦和高中\t王小明\t翻轉燈\t30\t2\t新北市中和區錦和路163號\t0912-345-678\n積穗國中\t李華老師\t發光卡片\t25\t1\t新北市中和區民安街66號\t02-22234567'
+                            );
+                          }}
+                          className="text-[11px] font-bold text-orange-700 hover:text-orange-800 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer self-start sm:self-auto shrink-0"
+                        >
+                          帶入範例格式
+                        </button>
+                      </div>
+
+                      <textarea
+                        rows={4}
+                        value={bulkDriftText}
+                        onChange={(e) => setBulkDriftText(e.target.value)}
+                        placeholder={`請在此直接貼上多行資料（每行一筆申請），例如：\n錦和高中\t王小明\t翻轉燈\t30\t2\t新北市中和區錦和路163號\t0912-345-678\n中和國中\t陳老師\t發光卡片\t28\t1\t新北市中和區興南路二段\t0922-111-222`}
+                        className="w-full p-3 bg-zinc-50 focus:bg-white border border-zinc-300 rounded-xl text-xs font-mono text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                      />
+
+                      {parsedBulkDriftItems.length > 0 && (
+                        <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2 animate-in fade-in duration-100">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-extrabold text-amber-900">
+                              🔍 即時預覽：已成功解析出 {parsedBulkDriftItems.length} 筆材料飄移資料
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setBulkDriftText('')}
+                              className="text-[11px] font-bold text-zinc-500 hover:text-rose-600 cursor-pointer"
+                            >
+                              清空內容
+                            </button>
+                          </div>
+                          <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                            {parsedBulkDriftItems.map((p, i) => (
+                              <div
+                                key={i}
+                                className="text-[11px] bg-white border border-amber-200/80 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                              >
+                                <span className="font-mono font-bold text-zinc-400">#{i + 1}</span>
+                                <span className="font-bold text-purple-800 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">
+                                  📚 {p.courseName} × {p.quantity} 份
+                                </span>
+                                <span className="font-bold text-zinc-900">{p.school}</span>
+                                <span className="text-zinc-700">({p.applicant} · {p.classCount}班)</span>
+                                {p.shippingAddress && (
+                                  <span className="text-[10px] text-zinc-400">📍 {p.shippingAddress}</span>
+                                )}
+                                {p.phone && (
+                                  <span className="text-[10px] text-zinc-400">📞 {p.phone}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={handleBulkImportDrift}
+                          disabled={parsedBulkDriftItems.length === 0}
+                          className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all ${
+                            parsedBulkDriftItems.length > 0
+                              ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-xs cursor-pointer'
+                              : 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed'
+                          }`}
+                        >
+                          <Icon name="plus" className="w-4 h-4" />
+                          <span>
+                            {parsedBulkDriftItems.length > 0
+                              ? `一鍵導入這 ${parsedBulkDriftItems.length} 筆材料飄移資料`
+                              : '貼上多行資料後即可一鍵導入'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Drift Checklist Card */}
+                    {driftTotalCount > 0 ? (
+                      <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
+                        <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
+                            <h3 className="text-sm font-black text-zinc-900">
+                              材料飄移備料核對清單（共 {driftTotalCount} 筆申請）
+                            </h3>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              exportToCSV(
+                                `FRC10114_材料飄移備料表_${getTodayDateStr()}.csv`,
+                                ['備料狀態', '申請的課程(材料)', '申請數量', '學校', '申請人', '班級數', '寄件地址', '連絡電話', '建立日期'],
+                                (driftRecords || []).map(dr => [
+                                  dr.prepared ? '已準備完成' : '尚未備料完畢',
+                                  dr.courseName || '',
+                                  `${dr.quantity || 0} 份`,
+                                  dr.school || '',
+                                  dr.applicant || '',
+                                  `${dr.classCount || 1} 班`,
+                                  dr.shippingAddress || '',
+                                  dr.phone || '',
+                                  dr.createdAt || ''
+                                ])
+                              );
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 shadow-2xs transition-colors cursor-pointer self-start sm:self-auto"
+                          >
+                            <Icon name="download" className="w-3.5 h-3.5 text-orange-600" />
+                            <span>匯出材料飄移表 (CSV)</span>
+                          </button>
+                        </div>
+
+                        <div className="divide-y divide-zinc-100">
+                          {(driftRecords || []).map((dr, idx) => {
+                            const isPrepared = Boolean(dr.prepared);
+                            const toggleDriftPrepared = (nextVal) => {
+                              if (onUpdateDriftRecord) {
+                                onUpdateDriftRecord({
+                                  ...dr,
+                                  prepared: nextVal,
+                                });
+                              }
+                            };
+
+                            return (
+                              <div
+                                key={dr.id || idx}
+                                onClick={() => toggleDriftPrepared(!isPrepared)}
+                                className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all cursor-pointer ${
+                                  isPrepared
+                                    ? 'bg-emerald-50/30 hover:bg-emerald-50/60'
+                                    : 'bg-white hover:bg-orange-50/40'
+                                }`}
+                              >
+                                <div className="flex items-start sm:items-center gap-3.5 flex-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={isPrepared}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      toggleDriftPrepared(e.target.checked);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                  />
+
+                                  <div className="space-y-1 flex-1">
+                                    {/* Primary prominent line: 材料內容 & 數量 + 學校/申請人/班級數 */}
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-mono text-xs font-bold text-zinc-400">
+                                        #{idx + 1}
+                                      </span>
+                                      <span
+                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                          isPrepared
+                                            ? 'bg-zinc-100 text-zinc-400 border-zinc-200 line-through'
+                                            : 'bg-purple-100 text-purple-900 border-purple-300'
+                                        }`}
+                                      >
+                                        📚 {dr.courseName || '未指定課程'}
+                                      </span>
+                                      <span
+                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                          isPrepared
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : 'bg-orange-100 text-orange-800 border-orange-300'
+                                        }`}
+                                      >
+                                        需準備：{dr.quantity || 0} 份
+                                      </span>
+                                      <span
+                                        className={`text-sm font-extrabold ${
+                                          isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
+                                        }`}
+                                      >
+                                        {dr.school}
+                                      </span>
+                                      <span className="text-xs font-bold text-zinc-600">
+                                        · 申請人：{dr.applicant}
+                                      </span>
+                                      {dr.classCount && (
+                                        <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                          {String(dr.classCount).replace(/班$/, '')} 班
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Secondary small text line: 寄件地址、連絡電話 */}
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
+                                      <span>
+                                        📍 寄件地址：{dr.shippingAddress || '未填寫地址'}
+                                      </span>
+                                      <span>
+                                        📞 連絡電話：{dr.phone || '未填寫電話'}
+                                      </span>
+                                      {dr.createdAt && (
+                                        <span>📅 登錄：{dr.createdAt}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <span
+                                    className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                      isPrepared
+                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                        : 'bg-amber-50 text-amber-800 border-amber-300'
+                                    }`}
+                                  >
+                                    <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
+                                    <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                  </span>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditDrift(dr)}
+                                    className="p-2 text-zinc-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors border border-transparent hover:border-orange-200 cursor-pointer"
+                                    title="編輯此筆材料飄移申請"
+                                  >
+                                    <Icon name="edit" className="w-4 h-4" />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (onDeleteDriftRecord) {
+                                        onDeleteDriftRecord(dr.id, `${dr.school} - ${dr.courseName}`);
+                                      }
+                                    }}
+                                    className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200 cursor-pointer"
+                                    title="刪除此筆材料飄移申請"
+                                  >
+                                    <Icon name="trash" className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white border border-zinc-200 rounded-2xl p-10 text-center text-zinc-400 shadow-xs">
+                        <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
+                        <h3 className="text-base font-bold text-zinc-800">目前尚無材料飄移申請資料</h3>
+                        <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-4">
+                          您可以直接在上方「快速複製貼入多行內容導入資料」貼上多筆申請，或點選下方按鈕單筆新增！
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleOpenAddDrift}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                        >
+                          <Icon name="plus" className="w-4 h-4" />
+                          <span>單筆新增材料飄移</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Add / Edit Single Material Drift Modal */}
+                {isDriftModalOpen && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+                    <div className="bg-white border border-zinc-200 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-6">
+                      <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-100">
+                        <div>
+                          <h3 className="text-base font-bold text-zinc-900">
+                            {editingDrift ? '✏️ 編輯材料飄移申請' : '📦 新增材料飄移申請'}
+                          </h3>
+                          <p className="text-xs text-zinc-500">
+                            填寫學校、申請人、申請的課程與數量，儲存後可於清單勾選備料狀態
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsDriftModalOpen(false);
+                            setEditingDrift(null);
+                          }}
+                          className="text-zinc-400 hover:text-zinc-700 p-1.5 rounded-lg"
+                        >
+                          <Icon name="x" className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      <form onSubmit={handleSubmitDrift} className="space-y-3.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-zinc-700 mb-1">學校 *</label>
+                            <input
+                              type="text"
+                              required
+                              value={driftSchool}
+                              onChange={(e) => setDriftSchool(e.target.value)}
+                              placeholder="例如：錦和高中 / 積穗國中"
+                              className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-zinc-700 mb-1">申請人 *</label>
+                            <input
+                              type="text"
+                              required
+                              value={driftApplicant}
+                              onChange={(e) => setDriftApplicant(e.target.value)}
+                              placeholder="例如：王小明 老師"
+                              className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1">申請的課程（教材內容） *</label>
+                          <select
+                            value={driftCourseSelect}
+                            onChange={(e) => setDriftCourseSelect(e.target.value)}
+                            className="w-full p-2.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                          >
+                            {allMaterialCourses.map(course => (
+                              <option key={course} value={course}>
+                                📚 {course}
+                              </option>
+                            ))}
+                            <option value="__custom__">➕ 新增新課程（手動輸入...）</option>
+                          </select>
+                        </div>
+
+                        {driftCourseSelect === '__custom__' && (
+                          <div className="animate-in fade-in duration-100">
+                            <label className="block text-xs font-bold text-orange-800 mb-1">
+                              手動輸入新課程／教材名稱（儲存後將自動記錄至下拉選單） *
+                            </label>
+                            <input
+                              type="text"
+                              required={driftCourseSelect === '__custom__'}
+                              value={driftCustomCourse}
+                              onChange={(e) => setDriftCustomCourse(e.target.value)}
+                              placeholder="例如：液壓機械手臂、太陽能小車..."
+                              className="w-full p-2.5 bg-white border border-orange-400 rounded-lg text-xs font-bold text-zinc-900 focus:ring-2 focus:ring-orange-500"
+                            />
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-zinc-700 mb-1">申請數量（份） *</label>
+                            <input
+                              type="number"
+                              min="1"
+                              required
+                              value={driftQuantity}
+                              onChange={(e) => setDriftQuantity(e.target.value)}
+                              placeholder="例如：30"
+                              className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-orange-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-zinc-700 mb-1">班級數</label>
+                            <input
+                              type="text"
+                              value={driftClassCount}
+                              onChange={(e) => setDriftClassCount(e.target.value)}
+                              placeholder="例如：2"
+                              className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium focus:ring-2 focus:ring-orange-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1">寄件地址</label>
+                          <input
+                            type="text"
+                            value={driftAddress}
+                            onChange={(e) => setDriftAddress(e.target.value)}
+                            placeholder="例如：新北市中和區錦和路163號"
+                            className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-orange-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1">連絡電話</label>
+                          <input
+                            type="text"
+                            value={driftPhone}
+                            onChange={(e) => setDriftPhone(e.target.value)}
+                            placeholder="例如：0912-345-678 / 02-22498566"
+                            className="w-full p-2.5 border border-zinc-300 rounded-lg text-xs font-mono font-medium focus:ring-2 focus:ring-orange-500"
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsDriftModalOpen(false);
+                              setEditingDrift(null);
+                            }}
+                            className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-medium hover:bg-zinc-100"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="submit"
+                            className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+                          >
+                            {editingDrift ? '儲存修改' : '新增材料飄移'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
                   </div>
                 )}
               </div>
@@ -13165,8 +13966,9 @@
         );
       }
 
-      function MemberCalendarTab({ events, member, members = [], savedIds = [], onToggleSave, onUpdateEvent, onShowToast }) {
-        const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey'
+      function MemberCalendarTab({ events, driftRecords = [], member, members = [], savedIds = [], onToggleSave, onUpdateEvent, onShowToast }) {
+        const [subTab, setSubTab] = useState('list'); // 'list' | 'month' | 'survey' | 'materials'
+        const [materialZone, setMaterialZone] = useState('activity'); // 'activity' | 'drift'
         const [view, setView] = useState('personal');
         const [showPast, setShowPast] = useState(false);
         const [expandedEventId, setExpandedEventId] = useState(null);
@@ -13201,8 +14003,12 @@
           });
           return rows;
         }, [materialEvents]);
-        const materialEventsCount = materialChecklistRows.length;
-        const unpreparedMaterialEventsCount = materialChecklistRows.filter(r => !r.item.prepared).length;
+        const activityMaterialsCount = materialChecklistRows.length;
+        const unpreparedActivityMaterialsCount = materialChecklistRows.filter(r => !r.item.prepared).length;
+        const driftTotalCount = (driftRecords || []).length;
+        const unpreparedDriftCount = (driftRecords || []).filter(d => !d.prepared).length;
+        const materialEventsCount = activityMaterialsCount + driftTotalCount;
+        const unpreparedMaterialEventsCount = unpreparedActivityMaterialsCount + unpreparedDriftCount;
 
         return (
           <div className="space-y-6">
@@ -13695,159 +14501,376 @@
                 </div>
               )}
 
-            {/* Sub-view 4: 教材需求表 (學生端唯讀檢視，打勾核准僅限管理員) */}
+            {/* Sub-view 4: 教材需求表 (學生端唯讀檢視：分為 活動備料區 & 材料飄移區，打勾核准僅限管理員) */}
             {subTab === 'materials' && (
               <div className="space-y-6 animate-in fade-in duration-150">
-                <div className="bg-gradient-to-r from-amber-50/70 via-orange-50/40 to-white border border-amber-200 rounded-xl p-5 shadow-xs">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
-                        <Icon name="package" className="w-4 h-4 text-orange-600" />
-                        <span>活動教材與備料需求總表（學生檢視專區）</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-white font-bold">
-                          🔒 僅供檢視（管理員核准）
+                {/* Zone Switcher: 活動備料區 vs 材料飄移區 */}
+                <div className="bg-white border border-zinc-200 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-extrabold text-zinc-700 px-2">選擇教材備料分區：</span>
+                    <div className="inline-flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200 text-xs font-bold gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setMaterialZone('activity')}
+                        className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all cursor-pointer ${
+                          materialZone === 'activity'
+                            ? 'bg-orange-600 text-white shadow-xs'
+                            : 'text-zinc-600 hover:text-zinc-900'
+                        }`}
+                      >
+                        <Icon name="calendar" className="w-3.5 h-3.5" />
+                        <span>活動備料區</span>
+                        <span
+                          className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                            materialZone === 'activity'
+                              ? 'bg-white text-orange-700'
+                              : unpreparedActivityMaterialsCount > 0
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-zinc-300 text-zinc-700'
+                          }`}
+                        >
+                          {activityMaterialsCount}
                         </span>
-                      </div>
-                      <p className="text-xs text-zinc-600">
-                        此處彙整各場活動所需準備的課程教材與份數（人數）。隊員可於此查看備料需求，備料完成之「打勾核准」僅限管理員教練操作。
-                      </p>
-                    </div>
+                      </button>
 
-                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                      <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
-                        <span className="text-[10px] text-zinc-500 font-bold block">待備料項目</span>
-                        <span className="text-lg font-black text-amber-600">
-                          {unpreparedMaterialEventsCount}
+                      <button
+                        type="button"
+                        onClick={() => setMaterialZone('drift')}
+                        className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all cursor-pointer ${
+                          materialZone === 'drift'
+                            ? 'bg-orange-600 text-white shadow-xs'
+                            : 'text-zinc-600 hover:text-zinc-900'
+                        }`}
+                      >
+                        <Icon name="package" className="w-3.5 h-3.5" />
+                        <span>材料飄移區</span>
+                        <span
+                          className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                            materialZone === 'drift'
+                              ? 'bg-white text-orange-700'
+                              : unpreparedDriftCount > 0
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-zinc-300 text-zinc-700'
+                          }`}
+                        >
+                          {driftTotalCount}
                         </span>
-                      </div>
-                      <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
-                        <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
-                        <span className="text-lg font-black text-emerald-600">
-                          {materialEventsCount - unpreparedMaterialEventsCount}
-                        </span>
-                      </div>
-                      <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
-                        <span className="text-[10px] text-zinc-500 font-bold block">累計需求總份數</span>
-                        <span className="text-lg font-black text-zinc-900">
-                          {materialChecklistRows.reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)} 份
-                        </span>
-                      </div>
+                      </button>
                     </div>
                   </div>
+
+                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-zinc-800 text-white font-bold self-start sm:self-auto">
+                    🔒 學生端唯讀檢視（打勾核准僅限管理員）
+                  </span>
                 </div>
 
-                {materialChecklistRows.length > 0 ? (
-                  <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
-                    <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Icon name="checkSquare" className="w-4 h-4 text-orange-600" />
-                        <h3 className="text-sm font-black text-zinc-900">
-                          教材準備狀態一覽（共 {materialChecklistRows.length} 項教材需求）
-                        </h3>
+                {/* ZONE A: 活動備料區 (學生唯讀) */}
+                {materialZone === 'activity' && (
+                  <div className="space-y-6 animate-in fade-in duration-150">
+                    <div className="bg-gradient-to-r from-amber-50/70 via-orange-50/40 to-white border border-amber-200 rounded-xl p-5 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
+                            <Icon name="package" className="w-4 h-4 text-orange-600" />
+                            <span>活動備料區 — 團隊活動教材需求總表</span>
+                          </div>
+                          <p className="text-xs text-zinc-600">
+                            此處彙整各場活動所需準備的課程教材與份數（人數）。隊員可於此查看備料需求，備料完成之「打勾核准」僅限管理員教練操作。
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">待備料項目</span>
+                            <span className="text-lg font-black text-amber-600">
+                              {unpreparedActivityMaterialsCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
+                            <span className="text-lg font-black text-emerald-600">
+                              {activityMaterialsCount - unpreparedActivityMaterialsCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">累計需求總份數</span>
+                            <span className="text-lg font-black text-zinc-900">
+                              {materialChecklistRows.reduce((sum, r) => sum + (parseInt(r.item.count, 10) || 0), 0)} 份
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-[11px] font-bold text-zinc-500">
-                        打勾代表已由管理員確認準備完成
-                      </span>
                     </div>
 
-                    <div className="divide-y divide-zinc-100">
-                      {materialChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
-                        const isPrepared = Boolean(item.prepared);
-                        return (
-                          <div
-                            key={`${ev.id}_${item.id || itemIdx}`}
-                            className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-                              isPrepared ? 'bg-emerald-50/30' : 'bg-white'
-                            }`}
-                          >
-                            <div className="flex items-start sm:items-center gap-3.5 flex-1">
-                              <input
-                                type="checkbox"
-                                checked={isPrepared}
-                                disabled={true}
-                                readOnly
-                                title="僅限管理員可打勾核准"
-                                className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 cursor-not-allowed opacity-80 shrink-0"
-                              />
+                    {materialChecklistRows.length > 0 ? (
+                      <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
+                        <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Icon name="checkSquare" className="w-4 h-4 text-orange-600" />
+                            <h3 className="text-sm font-black text-zinc-900">
+                              活動備料狀態一覽（共 {materialChecklistRows.length} 項教材需求）
+                            </h3>
+                          </div>
+                          <span className="text-[11px] font-bold text-zinc-500">
+                            打勾代表已由管理員確認準備完成
+                          </span>
+                        </div>
 
-                              <div className="space-y-1 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-mono text-xs font-bold text-zinc-400">
-                                    #{idx + 1}
-                                  </span>
-                                  <span
-                                    className={`text-sm sm:text-base font-black tracking-tight ${
-                                      isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
-                                    }`}
-                                  >
-                                    {ev.name}
-                                  </span>
-                                  {totalItemsInEv > 1 && (
-                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
-                                      項目 {itemIdx + 1}/{totalItemsInEv}
-                                    </span>
-                                  )}
-                                  {item.name && (
-                                    <span className="text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300">
-                                      📚 教材：{item.name}
-                                    </span>
-                                  )}
-                                  <span
-                                    className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
-                                      isPrepared
-                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                        : 'bg-orange-100 text-orange-800 border-orange-300'
-                                    }`}
-                                  >
-                                    需準備：{item.count || 0} 份 (人)
-                                  </span>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
-                                  <span className="font-semibold text-zinc-700 flex items-center gap-1">
-                                    <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
-                                    {ev.date}
-                                  </span>
-                                  <span className="font-mono flex items-center gap-1">
-                                    <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
-                                    {ev.startTime} - {ev.endTime}
-                                  </span>
-                                  <span className="text-[11px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200 font-medium">
-                                    {ev.type}
-                                  </span>
-                                  {(ev.departments || []).map(d => (
-                                    <span key={d} className="text-[10px] px-1.5 py-0.5 bg-zinc-50 text-zinc-600 rounded border border-zinc-200">
-                                      {d}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                              <span
-                                className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
-                                  isPrepared
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                    : 'bg-amber-50 text-amber-800 border-amber-300'
+                        <div className="divide-y divide-zinc-100">
+                          {materialChecklistRows.map(({ ev, item, itemIdx, totalItemsInEv }, idx) => {
+                            const isPrepared = Boolean(item.prepared);
+                            return (
+                              <div
+                                key={`${ev.id}_${item.id || itemIdx}`}
+                                className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                                  isPrepared ? 'bg-emerald-50/30' : 'bg-white'
                                 }`}
                               >
-                                <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
-                                <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                                <div className="flex items-start sm:items-center gap-3.5 flex-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={isPrepared}
+                                    disabled={true}
+                                    readOnly
+                                    title="僅限管理員可打勾核准"
+                                    className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 cursor-not-allowed opacity-80 shrink-0"
+                                  />
+
+                                  <div className="space-y-1 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-mono text-xs font-bold text-zinc-400">
+                                        #{idx + 1}
+                                      </span>
+                                      <span
+                                        className={`text-sm sm:text-base font-black tracking-tight ${
+                                          isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
+                                        }`}
+                                      >
+                                        {ev.name}
+                                      </span>
+                                      {totalItemsInEv > 1 && (
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
+                                          項目 {itemIdx + 1}/{totalItemsInEv}
+                                        </span>
+                                      )}
+                                      {item.name && (
+                                        <span className="text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300">
+                                          📚 教材：{item.name}
+                                        </span>
+                                      )}
+                                      <span
+                                        className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
+                                          isPrepared
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : 'bg-orange-100 text-orange-800 border-orange-300'
+                                        }`}
+                                      >
+                                        需準備：{item.count || 0} 份 (人)
+                                      </span>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                                      <span className="font-semibold text-zinc-700 flex items-center gap-1">
+                                        <Icon name="calendar" className="w-3.5 h-3.5 text-orange-500" />
+                                        {ev.date}
+                                      </span>
+                                      <span className="font-mono flex items-center gap-1">
+                                        <Icon name="clock" className="w-3.5 h-3.5 text-zinc-400" />
+                                        {ev.startTime} - {ev.endTime}
+                                      </span>
+                                      <span className="text-[11px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200 font-medium">
+                                        {ev.type}
+                                      </span>
+                                      {(ev.departments || []).map(d => (
+                                        <span key={d} className="text-[10px] px-1.5 py-0.5 bg-zinc-50 text-zinc-600 rounded border border-zinc-200">
+                                          {d}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                                  <span
+                                    className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                      isPrepared
+                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                        : 'bg-amber-50 text-amber-800 border-amber-300'
+                                    }`}
+                                  >
+                                    <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
+                                    <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
+                        <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
+                        <h3 className="text-base font-bold text-zinc-800">目前尚無需要準備教材的活動</h3>
+                        <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1">
+                          當教練或管理員發布活動並設定教材需求時，此處將自動列出各活動所需教材內容與份數。
+                        </p>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
-                    <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
-                    <h3 className="text-base font-bold text-zinc-800">目前尚無需要準備教材的活動</h3>
-                    <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1">
-                      當教練或管理員發布活動並設定教材需求時，此處將自動列出各活動所需教材內容與份數。
-                    </p>
+                )}
+
+                {/* ZONE B: 材料飄移區 (學生唯讀) */}
+                {materialZone === 'drift' && (
+                  <div className="space-y-6 animate-in fade-in duration-150">
+                    <div className="bg-gradient-to-r from-purple-50/70 via-amber-50/40 to-white border border-purple-200 rounded-xl p-5 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2 text-xs font-bold text-purple-900 mb-1">
+                            <Icon name="package" className="w-4 h-4 text-purple-600" />
+                            <span>材料飄移區 — 跨校課程教材申請與備料總表</span>
+                          </div>
+                          <p className="text-xs text-zinc-600">
+                            此處列出各校申請之材料飄移課程與所需數量，供隊員協助備料查閱（打勾確認僅限管理員操作）。
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          <div className="px-3.5 py-2 bg-white border border-amber-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">待備料申請</span>
+                            <span className="text-lg font-black text-amber-600">
+                              {unpreparedDriftCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-emerald-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">已準備完成</span>
+                            <span className="text-lg font-black text-emerald-600">
+                              {driftTotalCount - unpreparedDriftCount}
+                            </span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl shadow-2xs text-center">
+                            <span className="text-[10px] text-zinc-500 font-bold block">累計申請總數</span>
+                            <span className="text-lg font-black text-zinc-900">
+                              {(driftRecords || []).reduce((sum, d) => sum + (parseInt(d.quantity, 10) || 0), 0)} 份
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {driftTotalCount > 0 ? (
+                      <div className="bg-white border border-zinc-200 rounded-2xl shadow-xs overflow-hidden">
+                        <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Icon name="checkSquare" className="w-4 h-4 text-purple-600" />
+                            <h3 className="text-sm font-black text-zinc-900">
+                              材料飄移備料狀態一覽（共 {driftTotalCount} 筆申請）
+                            </h3>
+                          </div>
+                          <span className="text-[11px] font-bold text-zinc-500">
+                            打勾代表已由管理員確認準備完成
+                          </span>
+                        </div>
+
+                        <div className="divide-y divide-zinc-100">
+                          {(driftRecords || []).map((dr, idx) => {
+                            const isPrepared = Boolean(dr.prepared);
+                            return (
+                              <div
+                                key={dr.id || idx}
+                                className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                                  isPrepared ? 'bg-emerald-50/30' : 'bg-white'
+                                }`}
+                              >
+                                <div className="flex items-start sm:items-center gap-3.5 flex-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={isPrepared}
+                                    disabled={true}
+                                    readOnly
+                                    title="僅限管理員可打勾核准"
+                                    className="mt-1 sm:mt-0 w-5 h-5 text-emerald-600 rounded-md border-zinc-300 cursor-not-allowed opacity-80 shrink-0"
+                                  />
+
+                                  <div className="space-y-1 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-mono text-xs font-bold text-zinc-400">
+                                        #{idx + 1}
+                                      </span>
+                                      <span
+                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                          isPrepared
+                                            ? 'bg-zinc-100 text-zinc-400 border-zinc-200 line-through'
+                                            : 'bg-purple-100 text-purple-900 border-purple-300'
+                                        }`}
+                                      >
+                                        📚 {dr.courseName || '未指定課程'}
+                                      </span>
+                                      <span
+                                        className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
+                                          isPrepared
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : 'bg-orange-100 text-orange-800 border-orange-300'
+                                        }`}
+                                      >
+                                        需準備：{dr.quantity || 0} 份
+                                      </span>
+                                      <span
+                                        className={`text-sm font-extrabold ${
+                                          isPrepared ? 'line-through text-zinc-400' : 'text-zinc-900'
+                                        }`}
+                                      >
+                                        {dr.school}
+                                      </span>
+                                      <span className="text-xs font-bold text-zinc-600">
+                                        · 申請人：{dr.applicant}
+                                      </span>
+                                      {dr.classCount && (
+                                        <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                          {String(dr.classCount).replace(/班$/, '')} 班
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
+                                      <span>
+                                        📍 寄件地址：{dr.shippingAddress || '未填寫地址'}
+                                      </span>
+                                      <span>
+                                        📞 連絡電話：{dr.phone || '未填寫電話'}
+                                      </span>
+                                      {dr.createdAt && (
+                                        <span>📅 登錄：{dr.createdAt}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                                  <span
+                                    className={`text-xs font-extrabold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                                      isPrepared
+                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                        : 'bg-amber-50 text-amber-800 border-amber-300'
+                                    }`}
+                                  >
+                                    <Icon name={isPrepared ? 'check' : 'clock'} className="w-3.5 h-3.5" />
+                                    <span>{isPrepared ? '已經準備完成' : '還沒備料完畢'}</span>
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white border border-zinc-200 rounded-2xl p-12 text-center text-zinc-400 shadow-xs">
+                        <Icon name="package" className="w-12 h-12 mx-auto mb-3 text-zinc-300" />
+                        <h3 className="text-base font-bold text-zinc-800">目前尚無材料飄移申請資料</h3>
+                        <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1">
+                          當管理員登錄或導入跨校材料飄移申請時，此處將自動列出各筆所需教材內容與數量。
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
