@@ -3078,10 +3078,10 @@
           };
         }, [members, events, tasks, pendingTasks, materials, attendance, machineReservations, eduCategories, eduEquipment]);
 
-        // Auto-migration: ensure legacy '程式設計' in events is cleanly migrated to '程式控制'
+        // Auto-migration: ensure legacy '程式設計' in events is cleanly migrated to '程式控制', and deduplicate drift records
         useEffect(() => {
           let hasEventMigration = false;
-          const cleanedEvents = events.map(ev => {
+          let cleanedEvents = events.map(ev => {
             let changed = false;
             let newType = ev.type;
             if (typeof newType === 'string' && newType.includes('程式設計')) {
@@ -3102,6 +3102,13 @@
             }
             return ev;
           });
+
+          // Auto-cleanup any duplicate drift records from rapid bulk imports
+          const dedupedEvents = deduplicateDriftEvents(cleanedEvents);
+          if (dedupedEvents.length !== cleanedEvents.length) {
+            hasEventMigration = true;
+            cleanedEvents = dedupedEvents;
+          }
 
           if (hasEventMigration) {
             setEvents(cleanedEvents);
@@ -3169,7 +3176,7 @@
                     });
                   }
                   if (data.events && Array.isArray(data.events)) {
-                    const cleanedRemoteEvents = data.events.map(ev => ({
+                    const cleanedRemoteEvents = deduplicateDriftEvents(data.events).map(ev => ({
                       ...ev,
                       type: ev.type ? ev.type.replace(/程式設計/g, '程式控制') : ev.type,
                       departments: Array.isArray(ev.departments)
@@ -5456,18 +5463,29 @@
                     const created = list.map((item, idx) => ({
                       ...item,
                       id: item.id || `drift_${nowTs}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+                      createdAtTs: item.createdAtTs || (nowTs + idx),
                       isMaterialDrift: true,
                       departments: [],
                       attendees: [],
                     }));
-                    const next = [...events, ...created];
+                    // 防重複導入：檢查未寄送的紀錄是否已完全相同
+                    const existingSet = new Set(
+                      events
+                        .filter(e => e && e.isMaterialDrift && !e.shipped)
+                        .map(e => `${String(e.school || '').trim()}:::${String(e.applicant || '').trim()}:::${String(e.courseName || '').trim()}:::${String(e.quantity || '').trim()}`)
+                    );
+                    const toAdd = created.filter(c => !existingSet.has(`${String(c.school || '').trim()}:::${String(c.applicant || '').trim()}:::${String(c.courseName || '').trim()}:::${String(c.quantity || '').trim()}`));
+                    const actualAdded = toAdd.length > 0 ? toAdd : created;
+                    const next = deduplicateDriftEvents([...events, ...actualAdded]);
                     setEvents(next);
                     try { localStorage.setItem('frc10114_events', JSON.stringify(next)); } catch (e) {}
                     syncToCloud({ events: next });
-                    if (created.length > 1) {
-                      showToast('多行批次導入成功！', `已成功導入 ${created.length} 筆材料飄移備料資料`, 'success');
-                    } else if (created.length === 1) {
-                      showToast('材料飄移新增成功', `已新增「${created[0].school} - ${created[0].courseName}」備料項目`, 'success');
+                    if (actualAdded.length > 1) {
+                      showToast('多行批次導入成功！', `已成功導入 ${actualAdded.length} 筆材料飄移備料資料（已為您置頂顯示在最上方）`, 'success');
+                    } else if (actualAdded.length === 1) {
+                      showToast('材料飄移新增成功', `已新增「${actualAdded[0].school} - ${actualAdded[0].courseName}」備料項目（已置頂顯示）`, 'success');
+                    } else {
+                      showToast('資料已存在', '所貼上的材料飄移資料先前已導入過，無需重複匯入', 'info');
                     }
                   }}
                   onUpdateDriftRecord={(updatedItem) => {
@@ -7989,6 +8007,47 @@
         ];
       }
 
+      // Helper: Safely deduplicate material drift records (avoid duplicated items when pasting multiple times)
+      function deduplicateDriftEvents(list) {
+        if (!Array.isArray(list)) return [];
+        const nonDrift = list.filter(e => !e || !e.isMaterialDrift);
+        const drift = list.filter(e => e && e.isMaterialDrift);
+        const seen = new Set();
+        const cleanDrift = [];
+        drift.forEach(dr => {
+          const key = [
+            String(dr.school || '').trim(),
+            String(dr.applicant || '').trim(),
+            String(dr.courseName || '').trim(),
+            String(dr.quantity || '').trim(),
+            Boolean(dr.shipped),
+          ].join(':::');
+          if (!seen.has(key)) {
+            seen.add(key);
+            cleanDrift.push(dr);
+          }
+        });
+        return [...nonDrift, ...cleanDrift];
+      }
+
+      // Helper: Smart matching between course names (supports partial and alias matching like '紙電路-發光卡片' <-> '發光卡片')
+      function isMaterialCourseMatch(recordCourse, targetCourse) {
+        if (!targetCourse || targetCourse === 'all') return true;
+        if (!recordCourse) return false;
+        const rc = String(recordCourse).trim().toLowerCase();
+        const tc = String(targetCourse).trim().toLowerCase();
+        if (rc === tc) return true;
+        if (rc.includes(tc) || tc.includes(rc)) return true;
+        const isCardR = rc.includes('發光卡片') || rc.includes('紙電路');
+        const isCardT = tc.includes('發光卡片') || tc.includes('紙電路');
+        if (isCardR && isCardT) return true;
+        const isLightR = rc.includes('翻轉燈');
+        const isLightT = tc.includes('翻轉燈');
+        if (isLightR && isLightT) return true;
+        if (rc.includes('matrix') && tc.includes('matrix')) return true;
+        return false;
+      }
+
       // Helper: Parse multi-line pasted text for Material Drift (材料飄移區)
       // Expected column order: 學校 | 申請人 | 申請的課程 | 申請數量 | 班級數 | 寄件地址 | 連絡電話
       function parseMultiLineDriftText(rawText) {
@@ -8066,8 +8125,8 @@
         });
 
         return Array.from(courseSet).map(courseName => {
-          const actRows = materialChecklistRows.filter(r => r.item && String(r.item.name).trim() === courseName);
-          const driftRows = (driftRecords || []).filter(d => d && String(d.courseName).trim() === courseName);
+          const actRows = materialChecklistRows.filter(r => r.item && isMaterialCourseMatch(r.item.name, courseName));
+          const driftRows = (driftRecords || []).filter(d => d && isMaterialCourseMatch(d.courseName, courseName));
 
           const activityUnpreparedQty = actRows
             .filter(r => !r.item.prepared)
@@ -8158,7 +8217,7 @@
         const [description, setDescription] = useState('');
         const [allowRegistration, setAllowRegistration] = useState(false);
         const [needsMaterials, setNeedsMaterials] = useState(false);
-        const DEFAULT_MATERIAL_COURSES = ['翻轉燈', '發光卡片', 'Matrix機器人'];
+        const DEFAULT_MATERIAL_COURSES = ['翻轉燈', '發光卡片', '紙電路-發光卡片', 'Matrix機器人'];
         const [savedMaterialCourses, setSavedMaterialCourses] = useState(() => {
           try {
             const raw = localStorage.getItem('frc10114_material_courses');
@@ -8280,6 +8339,8 @@
           }
           setIsDriftModalOpen(false);
           setEditingDrift(null);
+          setMaterialZone('drift');
+          setSelectedMaterialCourse('all');
         };
 
         const handleBulkImportDrift = () => {
@@ -8300,6 +8361,8 @@
           if (onAddDriftRecords) {
             onAddDriftRecords(parsedBulkDriftItems);
           }
+          setMaterialZone('drift');
+          setSelectedMaterialCourse('all');
           setBulkDriftText('');
           setIsBulkDriftModalOpen(false);
         };
@@ -8542,15 +8605,44 @@
           () =>
             selectedMaterialCourse === 'all'
               ? driftRecords || []
-              : (driftRecords || []).filter(d => d && String(d.courseName).trim() === selectedMaterialCourse),
+              : (driftRecords || []).filter(d => isMaterialCourseMatch(d?.courseName, selectedMaterialCourse)),
           [driftRecords, selectedMaterialCourse]
         );
         const activeDriftRecords = useMemo(
-          () => displayedDriftRecords.filter(d => !d.shipped),
+          () =>
+            [...displayedDriftRecords]
+              .filter(d => !d.shipped)
+              .sort((a, b) => {
+                const getTs = (item) => {
+                  if (item.createdAtTs) return Number(item.createdAtTs);
+                  if (typeof item.id === 'string' && item.id.startsWith('drift_')) {
+                    const parts = item.id.split('_');
+                    const num = parseInt(parts[1], 10);
+                    if (!isNaN(num)) return num;
+                  }
+                  if (item.createdAt && typeof item.createdAt === 'string') {
+                    const d = Date.parse(item.createdAt);
+                    if (!isNaN(d)) return d;
+                  }
+                  return 0;
+                };
+                const tsA = getTs(a);
+                const tsB = getTs(b);
+                if (tsA !== tsB) return tsB - tsA;
+                return (b.id || '').localeCompare(a.id || '');
+              }),
           [displayedDriftRecords]
         );
         const shippedDriftRecords = useMemo(
-          () => displayedDriftRecords.filter(d => Boolean(d.shipped)),
+          () =>
+            [...displayedDriftRecords]
+              .filter(d => Boolean(d.shipped))
+              .sort((a, b) => {
+                const tsA = a.shippedAt || a.createdAt || '';
+                const tsB = b.shippedAt || b.createdAt || '';
+                if (tsA !== tsB) return tsB.localeCompare(tsA);
+                return (b.id || '').localeCompare(a.id || '');
+              }),
           [displayedDriftRecords]
         );
         const activeSelectedCourseSummary = useMemo(
@@ -9799,6 +9891,11 @@
                                           <span className="font-mono text-xs font-bold text-zinc-400">
                                             #{idx + 1}
                                           </span>
+                                          {((dr.createdAtTs && Date.now() - Number(dr.createdAtTs) < 300000) || (dr.id && typeof dr.id === 'string' && dr.id.startsWith('drift_') && Date.now() - parseInt(dr.id.split('_')[1], 10) < 300000)) && (
+                                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-orange-600 text-white shadow-2xs animate-pulse">
+                                              ✨ 最新導入
+                                            </span>
+                                          )}
                                           <span
                                             className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
                                               isPrepared
@@ -14663,15 +14760,44 @@
           () =>
             selectedMaterialCourse === 'all'
               ? driftRecords || []
-              : (driftRecords || []).filter(d => d && String(d.courseName).trim() === selectedMaterialCourse),
+              : (driftRecords || []).filter(d => isMaterialCourseMatch(d?.courseName, selectedMaterialCourse)),
           [driftRecords, selectedMaterialCourse]
         );
         const activeDriftRecords = useMemo(
-          () => displayedDriftRecords.filter(d => !d.shipped),
+          () =>
+            [...displayedDriftRecords]
+              .filter(d => !d.shipped)
+              .sort((a, b) => {
+                const getTs = (item) => {
+                  if (item.createdAtTs) return Number(item.createdAtTs);
+                  if (typeof item.id === 'string' && item.id.startsWith('drift_')) {
+                    const parts = item.id.split('_');
+                    const num = parseInt(parts[1], 10);
+                    if (!isNaN(num)) return num;
+                  }
+                  if (item.createdAt && typeof item.createdAt === 'string') {
+                    const d = Date.parse(item.createdAt);
+                    if (!isNaN(d)) return d;
+                  }
+                  return 0;
+                };
+                const tsA = getTs(a);
+                const tsB = getTs(b);
+                if (tsA !== tsB) return tsB - tsA;
+                return (b.id || '').localeCompare(a.id || '');
+              }),
           [displayedDriftRecords]
         );
         const shippedDriftRecords = useMemo(
-          () => displayedDriftRecords.filter(d => Boolean(d.shipped)),
+          () =>
+            [...displayedDriftRecords]
+              .filter(d => Boolean(d.shipped))
+              .sort((a, b) => {
+                const tsA = a.shippedAt || a.createdAt || '';
+                const tsB = b.shippedAt || b.createdAt || '';
+                if (tsA !== tsB) return tsB.localeCompare(tsA);
+                return (b.id || '').localeCompare(a.id || '');
+              }),
           [displayedDriftRecords]
         );
         const activeSelectedCourseSummary = useMemo(
@@ -15598,6 +15724,11 @@
                                           <span className="font-mono text-xs font-bold text-zinc-400">
                                             #{idx + 1}
                                           </span>
+                                          {((dr.createdAtTs && Date.now() - Number(dr.createdAtTs) < 300000) || (dr.id && typeof dr.id === 'string' && dr.id.startsWith('drift_') && Date.now() - parseInt(dr.id.split('_')[1], 10) < 300000)) && (
+                                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-orange-600 text-white shadow-2xs animate-pulse">
+                                              ✨ 最新導入
+                                            </span>
+                                          )}
                                           <span
                                             className={`text-sm sm:text-base font-black px-2.5 py-0.5 rounded-lg border ${
                                               isPrepared
