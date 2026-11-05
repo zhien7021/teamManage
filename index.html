@@ -4001,6 +4001,70 @@
           return true;
         };
 
+        const handleDeleteMember = async (targetId, targetName) => {
+          if (currentRole !== 'admin') {
+            showToast('權限不足', '僅限管理員教練可刪除隊員資料', 'error');
+            return false;
+          }
+          if (!targetId) {
+            showToast('錯誤', '找不到欲刪除的隊員識別碼', 'error');
+            return false;
+          }
+          if (targetId === currentMember?.id) {
+            showToast('無法刪除自身帳號', '管理員無法刪除當前登入中的帳號', 'warning');
+            return false;
+          }
+          if (targetId === '10114-001') {
+            showToast('不可刪除主管理員', '不可刪除隊伍首席教練/主管理員帳號', 'warning');
+            return false;
+          }
+          const remainingAdmins = members.filter(m => m.id !== targetId && m.role === 'admin');
+          if (remainingAdmins.length === 0) {
+            showToast('無法刪除', '系統必須至少保留一位管理員教練', 'warning');
+            return false;
+          }
+
+          const confirmed = window.confirm(
+            `確定要刪除隊員「${targetName || targetId}」(${targetId}) 嗎？\n\n此操作將從正式隊員名冊中移除該隊員資料（離隊處理）。\n此動作無法復原，是否確定刪除？`
+          );
+          if (!confirmed) return false;
+
+          const nextMembers = members.filter(m => m.id !== targetId);
+          setMembers(nextMembers);
+
+          // If the deleted member was currently selected, switch to another member
+          if (selectedMemberId === targetId) {
+            const nextSelected = nextMembers.find(m => m.id !== targetId) || nextMembers[0];
+            setSelectedMemberId(nextSelected ? nextSelected.id : '');
+          }
+
+          // Clean up unlocked PII memory cache
+          if (unlockedPiiMapRef.current && unlockedPiiMapRef.current[targetId]) {
+            const nextPii = { ...unlockedPiiMapRef.current };
+            delete nextPii[targetId];
+            unlockedPiiMapRef.current = nextPii;
+          }
+
+          try {
+            localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(nextMembers)));
+          } catch (storageErr) {
+            console.warn('LocalStorage write warning on delete member:', storageErr);
+          }
+
+          try {
+            const syncOk = await syncToCloud({ members: nextMembers });
+            if (firebaseConfig && !syncOk) {
+              showToast('本機名冊已刪除，雲端同步警示', '已自本機名冊刪除，但雲端同步失敗，請檢查網路連線', 'warning');
+            } else {
+              showToast('隊員已刪除', `隊員「${targetName || targetId}」已自隊伍名冊移除（離隊處理完成）`, 'success');
+            }
+          } catch (err) {
+            console.error('Delete member syncToCloud error:', err);
+            showToast('隊員已自本機刪除', '雲端同步發生異常，請檢查網路連線', 'warning');
+          }
+          return true;
+        };
+
         const handleUpdateProfile = async (updatedProfile) => {
           if (!updatedProfile.name?.trim()) {
             showToast('儲存失敗', '姓名不得為空', 'error');
@@ -5005,17 +5069,21 @@
                           ) : (
                             filteredMembersByDept.map(m => {
                               const isCur = m.id === selectedMemberId;
+                              const canDeleteThis = m.id !== currentMember?.id && m.id !== '10114-001';
                               return (
-                                <button
+                                <div
                                   key={m.id}
-                                  onClick={() => handleSwitchMember(m.id)}
-                                  className={`w-full text-left p-2.5 rounded-lg text-xs font-medium border transition-all flex items-center justify-between gap-2.5 cursor-pointer ${
+                                  className={`w-full p-2.5 rounded-lg text-xs font-medium border transition-all flex items-center justify-between gap-2.5 ${
                                     isCur
                                       ? 'bg-zinc-900 text-white border-zinc-900 shadow-xs'
-                                      : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200'
+                                      : 'bg-zinc-50 hover:bg-zinc-100/80 text-zinc-700 border-zinc-200'
                                   }`}
                                 >
-                                  <div className="flex items-center gap-2.5 min-w-0">
+                                  <div
+                                    onClick={() => handleSwitchMember(m.id)}
+                                    className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer select-none"
+                                    title={`點擊切換查看 ${m.name} 的資料`}
+                                  >
                                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 overflow-hidden border ${
                                       isCur ? 'bg-zinc-800 border-zinc-700 text-orange-400' : 'bg-zinc-900 border-zinc-800 text-orange-500'
                                     }`}>
@@ -5025,7 +5093,7 @@
                                         <span>{m.name.slice(0, 1)}</span>
                                       )}
                                     </div>
-                                    <div className="min-w-0">
+                                    <div className="min-w-0 flex-1">
                                       <div className="font-bold flex items-center gap-1.5 truncate">
                                         <span>{m.name}</span>
                                         <span className={`font-mono text-[10px] ${isCur ? 'text-orange-400' : 'text-zinc-400'}`}>({m.id})</span>
@@ -5038,8 +5106,28 @@
                                       </div>
                                     </div>
                                   </div>
-                                  {isCur && <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />}
-                                </button>
+
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    {canDeleteThis && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteMember(m.id, m.name);
+                                        }}
+                                        className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+                                          isCur
+                                            ? 'text-zinc-400 hover:text-red-300 hover:bg-zinc-800'
+                                            : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'
+                                        }`}
+                                        title={`刪除隊員 ${m.name} (${m.id}) 並處理離隊`}
+                                      >
+                                        <Icon name="trash" className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    {isCur && <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0 ml-1" />}
+                                  </div>
+                                </div>
                               );
                             })
                           )}
@@ -5057,17 +5145,32 @@
                           </p>
                         </div>
 
-                        {isDraftDirty ? (
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-lg text-xs font-bold text-amber-800 animate-pulse">
-                            <Icon name="alert" className="w-4 h-4 text-amber-600" />
-                            <span>有未儲存變更！</span>
-                          </div>
-                        ) : (
-                          <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-zinc-100 text-zinc-600 rounded-md text-xs font-medium">
-                            <Icon name="check" className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>內容已與名冊同步</span>
-                          </div>
-                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isDraftDirty ? (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-lg text-xs font-bold text-amber-800 animate-pulse">
+                              <Icon name="alert" className="w-4 h-4 text-amber-600" />
+                              <span>有未儲存變更！</span>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-zinc-100 text-zinc-600 rounded-md text-xs font-medium">
+                              <Icon name="check" className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>內容已與名冊同步</span>
+                            </div>
+                          )}
+
+                          {draftMember && draftMember.id !== currentMember?.id && draftMember.id !== '10114-001' && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMember(draftMember.id, draftMember.name)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-lg text-xs font-bold transition-colors shadow-2xs cursor-pointer"
+                              title={`刪除隊員 ${draftMember.name}（離隊）`}
+                            >
+                              <Icon name="trash" className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">刪除此隊員 (離隊)</span>
+                              <span className="sm:hidden">刪除</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {draftMember && (
@@ -5425,30 +5528,52 @@
                           </div>
 
                           {/* Action Buttons */}
-                          <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-100">
-                            <button
-                              type="button"
-                              onClick={handleDiscardDraft}
-                              disabled={!isDraftDirty}
-                              className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg border transition-all ${
-                                isDraftDirty ? 'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50 cursor-pointer' : 'bg-zinc-100 border-zinc-200 text-zinc-400 cursor-not-allowed'
-                              }`}
-                            >
-                              <Icon name="revert" className="w-3.5 h-3.5" />
-                              <span>取消變更</span>
-                            </button>
+                          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-100">
+                            <div>
+                              {draftMember && draftMember.id !== currentMember?.id && draftMember.id !== '10114-001' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteMember(draftMember.id, draftMember.name)}
+                                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-red-600 hover:text-white bg-red-50 hover:bg-red-600 border border-red-200 hover:border-red-600 rounded-lg transition-all cursor-pointer shadow-2xs active:scale-95"
+                                  title={`刪除隊員「${draftMember.name}」(${draftMember.id}) 並處理離隊`}
+                                >
+                                  <Icon name="trash" className="w-4 h-4" />
+                                  <span>刪除此隊員 (離隊)</span>
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-zinc-400">
+                                  {draftMember?.id === currentMember?.id
+                                    ? '當前登入管理員帳號不可自刪'
+                                    : (draftMember?.id === '10114-001' ? '主管理員帳號不可刪除' : '')}
+                                </span>
+                              )}
+                            </div>
 
-                            <button
-                              type="button"
-                              onClick={handleSaveDraft}
-                              className={`inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold rounded-lg transition-all shadow-xs cursor-pointer active:scale-95 ${
-                                isDraftDirty ? 'bg-orange-600 hover:bg-orange-700 text-white font-bold ring-2 ring-orange-500/20' : 'bg-zinc-900 hover:bg-zinc-800 text-white'
-                              }`}
-                              title="立即儲存隊員資料並同步至雲端資料庫"
-                            >
-                              <Icon name="save" className={`w-4 h-4 ${isDraftDirty ? 'text-white' : 'text-orange-400'}`} />
-                              <span>{isDraftDirty ? '儲存隊員資料 (有未存變更)' : '儲存正式名冊 (已同步)'}</span>
-                            </button>
+                            <div className="flex items-center gap-3">
+                              <button
+                                type="button"
+                                onClick={handleDiscardDraft}
+                                disabled={!isDraftDirty}
+                                className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg border transition-all ${
+                                  isDraftDirty ? 'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50 cursor-pointer' : 'bg-zinc-100 border-zinc-200 text-zinc-400 cursor-not-allowed'
+                                }`}
+                              >
+                                <Icon name="revert" className="w-3.5 h-3.5" />
+                                <span>取消變更</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleSaveDraft}
+                                className={`inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold rounded-lg transition-all shadow-xs cursor-pointer active:scale-95 ${
+                                  isDraftDirty ? 'bg-orange-600 hover:bg-orange-700 text-white font-bold ring-2 ring-orange-500/20' : 'bg-zinc-900 hover:bg-zinc-800 text-white'
+                                }`}
+                                title="立即儲存隊員資料並同步至雲端資料庫"
+                              >
+                                <Icon name="save" className={`w-4 h-4 ${isDraftDirty ? 'text-white' : 'text-orange-400'}`} />
+                                <span>{isDraftDirty ? '儲存隊員資料 (有未存變更)' : '儲存正式名冊 (已同步)'}</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}
