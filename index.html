@@ -3078,7 +3078,8 @@
           };
         }, [members, events, tasks, pendingTasks, materials, attendance, machineReservations, eduCategories, eduEquipment]);
 
-        // Auto-migration: ensure legacy '程式設計' in events is cleanly migrated to '程式控制', and deduplicate drift records
+        // Auto-migration: ensure legacy '程式設計' in events is cleanly migrated to '程式控制',
+        // unify '紙電路-發光卡片' to '發光卡片', and deduplicate drift records
         useEffect(() => {
           let hasEventMigration = false;
           let cleanedEvents = events.map(ev => {
@@ -3096,16 +3097,46 @@
                 changed = true;
               }
             }
+            let newCourseName = ev.courseName;
+            if (newCourseName && (newCourseName.includes('紙電路') || newCourseName.includes('發光卡片'))) {
+              const norm = normalizeCourseName(newCourseName);
+              if (norm !== newCourseName) {
+                newCourseName = norm;
+                changed = true;
+              }
+            }
+            let newMatName = ev.materialName;
+            if (newMatName && (newMatName.includes('紙電路') || newMatName.includes('發光卡片'))) {
+              const norm = normalizeCourseName(newMatName);
+              if (norm !== newMatName) {
+                newMatName = norm;
+                changed = true;
+              }
+            }
+            let newMatItems = ev.materialItems;
+            if (Array.isArray(newMatItems)) {
+              const updatedItems = newMatItems.map(it => {
+                if (it && it.name && (it.name.includes('紙電路') || it.name.includes('發光卡片'))) {
+                  const norm = normalizeCourseName(it.name);
+                  if (norm !== it.name) {
+                    changed = true;
+                    return { ...it, name: norm };
+                  }
+                }
+                return it;
+              });
+              if (changed) newMatItems = updatedItems;
+            }
             if (changed) {
               hasEventMigration = true;
-              return { ...ev, type: newType, departments: newDepts };
+              return { ...ev, type: newType, departments: newDepts, courseName: newCourseName, materialName: newMatName, materialItems: newMatItems };
             }
             return ev;
           });
 
-          // Auto-cleanup any duplicate drift records from rapid bulk imports
+          // Auto-cleanup any duplicate drift records and unify course names to '發光卡片'
           const dedupedEvents = deduplicateDriftEvents(cleanedEvents);
-          if (dedupedEvents.length !== cleanedEvents.length) {
+          if (dedupedEvents.length !== cleanedEvents.length || JSON.stringify(dedupedEvents) !== JSON.stringify(cleanedEvents)) {
             hasEventMigration = true;
             cleanedEvents = dedupedEvents;
           }
@@ -8007,6 +8038,23 @@
         ];
       }
 
+      // Helper: Normalize material course names to standard canonical names
+      // Ensures '紙電路-發光卡片', '紙電路－發光卡片', '紙電路發光卡片' are all unified to '發光卡片'
+      function normalizeCourseName(name) {
+        if (!name) return '';
+        const s = String(name).trim();
+        if (s.includes('發光卡片') || s.includes('紙電路')) {
+          return '發光卡片';
+        }
+        if (s.includes('翻轉燈')) {
+          return '翻轉燈';
+        }
+        if (s.toLowerCase().includes('matrix')) {
+          return 'Matrix機器人';
+        }
+        return s;
+      }
+
       // Helper: Safely deduplicate material drift records (avoid duplicated items when pasting multiple times)
       function deduplicateDriftEvents(list) {
         if (!Array.isArray(list)) return [];
@@ -8015,16 +8063,17 @@
         const seen = new Set();
         const cleanDrift = [];
         drift.forEach(dr => {
+          const normCourse = normalizeCourseName(dr.courseName);
           const key = [
             String(dr.school || '').trim(),
             String(dr.applicant || '').trim(),
-            String(dr.courseName || '').trim(),
+            normCourse,
             String(dr.quantity || '').trim(),
             Boolean(dr.shipped),
           ].join(':::');
           if (!seen.has(key)) {
             seen.add(key);
-            cleanDrift.push(dr);
+            cleanDrift.push(dr.courseName !== normCourse ? { ...dr, courseName: normCourse } : dr);
           }
         });
         return [...nonDrift, ...cleanDrift];
@@ -8034,17 +8083,12 @@
       function isMaterialCourseMatch(recordCourse, targetCourse) {
         if (!targetCourse || targetCourse === 'all') return true;
         if (!recordCourse) return false;
+        const normRecord = normalizeCourseName(recordCourse);
+        const normTarget = normalizeCourseName(targetCourse);
+        if (normRecord === normTarget) return true;
         const rc = String(recordCourse).trim().toLowerCase();
         const tc = String(targetCourse).trim().toLowerCase();
-        if (rc === tc) return true;
-        if (rc.includes(tc) || tc.includes(rc)) return true;
-        const isCardR = rc.includes('發光卡片') || rc.includes('紙電路');
-        const isCardT = tc.includes('發光卡片') || tc.includes('紙電路');
-        if (isCardR && isCardT) return true;
-        const isLightR = rc.includes('翻轉燈');
-        const isLightT = tc.includes('翻轉燈');
-        if (isLightR && isLightT) return true;
-        if (rc.includes('matrix') && tc.includes('matrix')) return true;
+        if (rc === tc || rc.includes(tc) || tc.includes(rc)) return true;
         return false;
       }
 
@@ -8090,7 +8134,7 @@
 
           const school = cols[0] || '未填寫學校';
           const applicant = cols[1] || '未填寫申請人';
-          const courseName = cols[2] || '翻轉燈';
+          const courseName = normalizeCourseName(cols[2] || '翻轉燈');
           const rawQty = cols[3] !== undefined ? cols[3] : '1';
           const quantity = Math.max(1, parseInt(String(rawQty).replace(/[^\d]/g, ''), 10) || 1);
           const rawClassCount = cols[4] !== undefined ? cols[4] : '1';
@@ -8116,17 +8160,17 @@
 
       // Helper: Aggregate pending & prepared quantities per material course across both Activity Prep & Material Drift
       function computeMaterialSummaryByCourse(materialChecklistRows = [], driftRecords = [], baseCourses = []) {
-        const courseSet = new Set(baseCourses.filter(Boolean));
+        const courseSet = new Set(baseCourses.map(normalizeCourseName).filter(Boolean));
         materialChecklistRows.forEach(r => {
-          if (r && r.item && r.item.name) courseSet.add(String(r.item.name).trim());
+          if (r && r.item && r.item.name) courseSet.add(normalizeCourseName(r.item.name));
         });
         (driftRecords || []).forEach(d => {
-          if (d && d.courseName) courseSet.add(String(d.courseName).trim());
+          if (d && d.courseName) courseSet.add(normalizeCourseName(d.courseName));
         });
 
         return Array.from(courseSet).map(courseName => {
-          const actRows = materialChecklistRows.filter(r => r.item && isMaterialCourseMatch(r.item.name, courseName));
-          const driftRows = (driftRecords || []).filter(d => d && isMaterialCourseMatch(d.courseName, courseName));
+          const actRows = materialChecklistRows.filter(r => r.item && normalizeCourseName(r.item.name) === courseName);
+          const driftRows = (driftRecords || []).filter(d => d && normalizeCourseName(d.courseName) === courseName);
 
           const activityUnpreparedQty = actRows
             .filter(r => !r.item.prepared)
@@ -8217,13 +8261,13 @@
         const [description, setDescription] = useState('');
         const [allowRegistration, setAllowRegistration] = useState(false);
         const [needsMaterials, setNeedsMaterials] = useState(false);
-        const DEFAULT_MATERIAL_COURSES = ['翻轉燈', '發光卡片', '紙電路-發光卡片', 'Matrix機器人'];
+        const DEFAULT_MATERIAL_COURSES = ['翻轉燈', '發光卡片', 'Matrix機器人'];
         const [savedMaterialCourses, setSavedMaterialCourses] = useState(() => {
           try {
             const raw = localStorage.getItem('frc10114_material_courses');
             const parsed = raw ? JSON.parse(raw) : [];
             if (Array.isArray(parsed)) {
-              return Array.from(new Set([...DEFAULT_MATERIAL_COURSES, ...parsed.filter(Boolean)]));
+              return Array.from(new Set([...DEFAULT_MATERIAL_COURSES, ...parsed.map(normalizeCourseName).filter(Boolean)]));
             }
           } catch (e) {}
           return DEFAULT_MATERIAL_COURSES;
@@ -8235,19 +8279,20 @@
             if (Array.isArray(ev.materialItems)) {
               ev.materialItems.forEach(item => {
                 if (item && item.name && String(item.name).trim()) {
-                  fromEvents.push(String(item.name).trim());
+                  fromEvents.push(normalizeCourseName(item.name));
                 }
               });
             } else if (ev.materialName && String(ev.materialName).trim()) {
-              fromEvents.push(String(ev.materialName).trim());
+              fromEvents.push(normalizeCourseName(ev.materialName));
             }
           });
           (driftRecords || []).forEach(dr => {
             if (dr && dr.courseName && String(dr.courseName).trim()) {
-              fromEvents.push(String(dr.courseName).trim());
+              fromEvents.push(normalizeCourseName(dr.courseName));
             }
           });
-          return Array.from(new Set([...savedMaterialCourses, ...fromEvents]));
+          const normalizedSaved = savedMaterialCourses.map(normalizeCourseName);
+          return Array.from(new Set([...normalizedSaved, ...fromEvents])).filter(Boolean);
         }, [savedMaterialCourses, events, driftRecords]);
 
         const handleOpenAddDrift = () => {
@@ -14691,7 +14736,7 @@
             const raw = localStorage.getItem('frc10114_material_courses');
             const parsed = raw ? JSON.parse(raw) : [];
             if (Array.isArray(parsed)) {
-              return Array.from(new Set([...base, ...parsed.filter(Boolean)]));
+              return Array.from(new Set([...base, ...parsed.map(normalizeCourseName).filter(Boolean)]));
             }
           } catch (e) {}
           return base;
