@@ -1869,6 +1869,7 @@
           plus: <g><line x1="12" x2="12" y1="5" y2="19" /><line x1="5" x2="19" y1="12" y2="12" /></g>,
           save: <g><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></g>,
           revert: <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />,
+          refresh: <g><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" /></g>,
           quote: <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z" />,
           arrowRight: <g><line x1="5" x2="19" y1="12" y2="12" /><polyline points="12 5 19 12 12 19" /></g>,
           star: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />,
@@ -2346,6 +2347,45 @@
         return false;
       }
 
+      // On-demand fast fetcher for a single member's cloud vault (Checks dynamic & legacy proofs)
+      async function fetchMemberVaultPii(firebaseConfig, targetMemberId) {
+        if (!firebaseConfig || !targetMemberId) return null;
+        const db = initFirestore(firebaseConfig);
+        if (!db) return null;
+        const defaultPass = '10114';
+        const dynProof = deriveClientProof(defaultPass, targetMemberId);
+        const dynSelfKey = rawDigest256('SELF_VAULT_KEY_V3', `${targetMemberId}::${dynProof}`);
+        const dynSelfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', dynSelfKey);
+
+        try {
+          let sSnap = await db.collection('frc10114_vault').doc(dynSelfDocId).get();
+          let activeSKey = dynSelfKey;
+          if (!sSnap.exists || !sSnap.data()?.cipherPayload) {
+            const legProof = deriveClientProof(defaultPass);
+            const legSelfKey = rawDigest256('SELF_VAULT_KEY_V3', `${targetMemberId}::${legProof}`);
+            const legSelfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', legSelfKey);
+            const lSnap = await db.collection('frc10114_vault').doc(legSelfDocId).get();
+            if (lSnap.exists && lSnap.data()?.cipherPayload) {
+              sSnap = lSnap;
+              activeSKey = legSelfKey;
+            }
+          }
+          if (sSnap.exists && sSnap.data()?.cipherPayload) {
+            const sDec = vaultDecrypt(sSnap.data().cipherPayload, activeSKey);
+            if (sDec) {
+              const parsed = JSON.parse(sDec);
+              const memPii = parsed.pii || parsed;
+              if (hasMemberPii(memPii)) {
+                return memPii;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Fetch member vault warning:', e);
+        }
+        return null;
+      }
+
       async function unlockSessionVault(firebaseConfig, role, memberId, proofOrPlain, membersList) {
         const db = initFirestore(firebaseConfig);
         if (!db || !role || !memberId || !proofOrPlain) return {};
@@ -2408,6 +2448,87 @@
               }
             }
 
+            // Shared Coaching Keypair recovery (Ensures all coaches share same RSA keypair)
+            const sharedCoachKey = rawDigest256('COACH_SHARED_VAULT_KEY', decodeSecret('enc$36066136d3accaef674f'));
+            const sharedDocId = 'adm_shared_' + rawDigest256('COACH_SHARED_DOC', sharedCoachKey);
+            if (!rsaPubJwk || !rsaPrivJwk) {
+              try {
+                const sharedSnap = await db.collection('frc10114_vault').doc(sharedDocId).get();
+                if (sharedSnap.exists && sharedSnap.data()?.cipherPayload) {
+                  const sDec = vaultDecrypt(sharedSnap.data().cipherPayload, sharedCoachKey);
+                  if (sDec) {
+                    const sObj = JSON.parse(sDec);
+                    rsaPubJwk = sObj.rsaPubJwk || rsaPubJwk;
+                    rsaPrivJwk = sObj.rsaPrivJwk || rsaPrivJwk;
+                  }
+                }
+              } catch (sErr) {}
+            }
+
+            // Direct Cloud Vault Scan for Members (Zero-loss fallback for all roster members)
+            if (Array.isArray(membersList)) {
+              const defaultPass = '10114';
+              const scanPromises = membersList.map(async (m) => {
+                if (!m || !m.id || m.id === memberId) return;
+                if (piiMap[m.id] && hasMemberPii(piiMap[m.id])) return;
+
+                const dynProof = deriveClientProof(defaultPass, m.id);
+                const dynSelfKey = rawDigest256('SELF_VAULT_KEY_V3', `${m.id}::${dynProof}`);
+                const dynSelfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', dynSelfKey);
+
+                try {
+                  let sSnap = await db.collection('frc10114_vault').doc(dynSelfDocId).get();
+                  let activeSKey = dynSelfKey;
+                  if (!sSnap.exists || !sSnap.data()?.cipherPayload) {
+                    const legProof = deriveClientProof(defaultPass);
+                    const legSelfKey = rawDigest256('SELF_VAULT_KEY_V3', `${m.id}::${legProof}`);
+                    const legSelfDocId = 'self_' + rawDigest256('SELF_VAULT_DOC_V3', legSelfKey);
+                    const lSnap = await db.collection('frc10114_vault').doc(legSelfDocId).get();
+                    if (lSnap.exists && lSnap.data()?.cipherPayload) {
+                      sSnap = lSnap;
+                      activeSKey = legSelfKey;
+                    }
+                  }
+                  if (sSnap.exists && sSnap.data()?.cipherPayload) {
+                    const sDec = vaultDecrypt(sSnap.data().cipherPayload, activeSKey);
+                    if (sDec) {
+                      const parsed = JSON.parse(sDec);
+                      const memPii = parsed.pii || parsed;
+                      if (hasMemberPii(memPii)) {
+                        piiMap[m.id] = { ...(piiMap[m.id] || {}), ...memPii };
+                        needsSave = true;
+                      }
+                    }
+                  }
+                } catch (mErr) {}
+              });
+              await Promise.allSettled(scanPromises);
+            }
+
+            // Check Student->Coach Encrypted Inbox updates
+            if (rsaPrivJwk && Array.isArray(membersList)) {
+              const inboxChecks = membersList.map(async (m) => {
+                if (!m || !m.id) return;
+                const inboxDocId = 'inbox_' + rawDigest256('INBOX_DOC_V3', m.id);
+                try {
+                  const inSnap = await db.collection('frc10114_vault').doc(inboxDocId).get();
+                  if (inSnap.exists && inSnap.data()?.encKeyB64) {
+                    const studentPii = await rsaDecryptPiiEnvelope(inSnap.data(), rsaPrivJwk);
+                    if (studentPii && hasMemberPii(studentPii)) {
+                      piiMap[m.id] = { ...(piiMap[m.id] || {}), ...studentPii };
+                      needsSave = true;
+                      try {
+                        await db.collection('frc10114_vault').doc(inboxDocId).delete();
+                      } catch (delErr) {}
+                    }
+                  }
+                } catch (inErr) {
+                  console.warn('Inbox envelope check warning:', inErr);
+                }
+              });
+              await Promise.allSettled(inboxChecks);
+            }
+
             // Ensure Admin 2048-bit RSA-OAEP Keypair for Student->Coach Encrypted Inbox
             if (!rsaPubJwk || !rsaPrivJwk) {
               const kp = await generateRsaKeyPairJwk();
@@ -2420,32 +2541,14 @@
                     pubJwk: rsaPubJwk,
                     updatedAt: Date.now(),
                   });
+                  await db.collection('frc10114_vault').doc(sharedDocId).set({
+                    cipherPayload: vaultEncrypt(JSON.stringify({ rsaPubJwk, rsaPrivJwk }), sharedCoachKey),
+                    updatedAt: Date.now(),
+                  });
                 } catch (pubErr) {
                   console.warn('Publish admin RSA public key warning:', pubErr);
                 }
               }
-            }
-
-            // Check Student->Coach Encrypted Inbox updates
-            if (rsaPrivJwk && Array.isArray(membersList)) {
-              const inboxChecks = membersList.map(async (m) => {
-                if (!m || !m.id) return;
-                const inboxDocId = 'inbox_' + rawDigest256('INBOX_DOC_V3', m.id);
-                try {
-                  const inSnap = await db.collection('frc10114_vault').doc(inboxDocId).get();
-                  if (inSnap.exists && inSnap.data()?.encKeyB64) {
-                    const studentPii = await rsaDecryptPiiEnvelope(inSnap.data(), rsaPrivJwk);
-                    if (studentPii) {
-                      piiMap[m.id] = { ...(piiMap[m.id] || {}), ...studentPii };
-                      needsSave = true;
-                      await db.collection('frc10114_vault').doc(inboxDocId).delete();
-                    }
-                  }
-                } catch (inErr) {
-                  console.warn('Inbox envelope check warning:', inErr);
-                }
-              });
-              await Promise.allSettled(inboxChecks);
             }
 
             if (needsSave) {
@@ -3122,6 +3225,7 @@
         const [pendingSwitchMemberId, setPendingSwitchMemberId] = useState(null);
         const [isUnsavedModalOpen, setIsUnsavedModalOpen] = useState(false);
         const [memberDeptFilter, setMemberDeptFilter] = useState('all');
+        const [isSyncingVaults, setIsSyncingVaults] = useState(false);
 
         // Toast Messages
         const [toasts, setToasts] = useState([]);
@@ -3994,6 +4098,42 @@
             setIsUnsavedModalOpen(true);
           } else {
             setSelectedMemberId(nextId);
+            if (currentRole === 'admin' && firebaseConfig && (!unlockedPiiMapRef.current[nextId] || !hasMemberPii(unlockedPiiMapRef.current[nextId]))) {
+              fetchMemberVaultPii(firebaseConfig, nextId).then(pii => {
+                if (pii && Object.keys(pii).length > 0) {
+                  unlockedPiiMapRef.current = { ...unlockedPiiMapRef.current, [nextId]: pii };
+                  setMembers(prev => normalizeMembersFromStorage(prev, unlockedPiiMapRef.current));
+                  setDraftMember(prev => prev && prev.id === nextId ? ({ ...prev, ...pii }) : prev);
+                }
+              });
+            }
+          }
+        };
+
+        // Manual vault sync for Admin
+        const handleSyncAllMemberVaults = async () => {
+          if (currentRole !== 'admin') return;
+          setIsSyncingVaults(true);
+          try {
+            const proof = getSessionProofFromStorage();
+            const piiMap = await unlockSessionVault(firebaseConfig, 'admin', currentMember?.id || '10114-001', proof, members);
+            if (piiMap && Object.keys(piiMap).length > 0) {
+              unlockedPiiMapRef.current = { ...unlockedPiiMapRef.current, ...piiMap };
+              const nextMembers = normalizeMembersFromStorage(members, unlockedPiiMapRef.current);
+              setMembers(nextMembers);
+              if (selectedMemberId && unlockedPiiMapRef.current[selectedMemberId]) {
+                const sPii = unlockedPiiMapRef.current[selectedMemberId];
+                setDraftMember(prev => prev ? ({ ...prev, ...sPii }) : prev);
+              }
+              showToast('保險箱同步成功！', `已自雲端保險箱載入 ${Object.keys(piiMap).length} 位隊員之最新加密個資`, 'success');
+            } else {
+              showToast('保險箱同步完成', '目前雲端加密保險箱尚無待收取的隊員新資料', 'info');
+            }
+          } catch (e) {
+            console.error('Sync member vaults failed:', e);
+            showToast('同步失敗', '讀取雲端保險箱失敗，請檢查網路連線', 'error');
+          } finally {
+            setIsSyncingVaults(false);
           }
         };
 
@@ -4583,7 +4723,17 @@
 
         const handleDiscardAndProceedSwitch = () => {
           if (pendingSwitchMemberId) {
-            setSelectedMemberId(pendingSwitchMemberId);
+            const nextId = pendingSwitchMemberId;
+            setSelectedMemberId(nextId);
+            if (currentRole === 'admin' && firebaseConfig && (!unlockedPiiMapRef.current[nextId] || !hasMemberPii(unlockedPiiMapRef.current[nextId]))) {
+              fetchMemberVaultPii(firebaseConfig, nextId).then(pii => {
+                if (pii && Object.keys(pii).length > 0) {
+                  unlockedPiiMapRef.current = { ...unlockedPiiMapRef.current, [nextId]: pii };
+                  setMembers(prev => normalizeMembersFromStorage(prev, unlockedPiiMapRef.current));
+                  setDraftMember(prev => prev && prev.id === nextId ? ({ ...prev, ...pii }) : prev);
+                }
+              });
+            }
           }
           setIsUnsavedModalOpen(false);
           setPendingSwitchMemberId(null);
@@ -5044,6 +5194,17 @@
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+                      <button
+                        type="button"
+                        onClick={handleSyncAllMemberVaults}
+                        disabled={isSyncingVaults}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-orange-50 border border-zinc-300 text-zinc-700 font-bold text-xs rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                        title="自雲端加密保險箱查收全隊最新個資與信件"
+                      >
+                        <Icon name="refresh" className={`w-4 h-4 text-orange-600 ${isSyncingVaults ? 'animate-spin' : ''}`} />
+                        <span>{isSyncingVaults ? '保險箱同步中...' : '同步隊員保險箱'}</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={handleExportMembersList}
