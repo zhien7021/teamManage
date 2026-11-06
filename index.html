@@ -2347,7 +2347,7 @@
         return false;
       }
 
-      // On-demand fast fetcher for a single member's cloud vault (Checks dynamic & legacy proofs)
+      // On-demand fast fetcher for a single member's cloud vault (Checks dynamic & legacy proofs, plus inbox envelope)
       async function fetchMemberVaultPii(firebaseConfig, targetMemberId) {
         if (!firebaseConfig || !targetMemberId) return null;
         const db = initFirestore(firebaseConfig);
@@ -2377,6 +2377,27 @@
               const memPii = parsed.pii || parsed;
               if (hasMemberPii(memPii)) {
                 return memPii;
+              }
+            }
+          }
+
+          // Fallback: Check Student->Coach Encrypted Inbox envelope (for members with custom password)
+          const inboxDocId = 'inbox_' + rawDigest256('INBOX_DOC_V3', targetMemberId);
+          const inSnap = await db.collection('frc10114_vault').doc(inboxDocId).get();
+          if (inSnap.exists && inSnap.data()?.encKeyB64) {
+            const sharedCoachKey = rawDigest256('COACH_SHARED_VAULT_KEY', decodeSecret('enc$36066136d3accaef674f'));
+            const sharedDocId = 'adm_shared_' + rawDigest256('COACH_SHARED_DOC', sharedCoachKey);
+            const sharedSnap = await db.collection('frc10114_vault').doc(sharedDocId).get();
+            if (sharedSnap.exists && sharedSnap.data()?.cipherPayload) {
+              const sDec = vaultDecrypt(sharedSnap.data().cipherPayload, sharedCoachKey);
+              if (sDec) {
+                const sObj = JSON.parse(sDec);
+                if (sObj.rsaPrivJwk) {
+                  const studentPii = await rsaDecryptPiiEnvelope(inSnap.data(), sObj.rsaPrivJwk);
+                  if (studentPii && hasMemberPii(studentPii)) {
+                    return studentPii;
+                  }
+                }
               }
             }
           }
@@ -3395,7 +3416,24 @@
                 if (data && data.updatedBy !== clientIdRef.current) {
                   isRemoteUpdateRef.current = true;
                   if (data.members && Array.isArray(data.members) && data.members.length > 0) {
-                    const normalizedRemoteMembers = normalizeMembersFromStorage(data.members, unlockedPiiMapRef.current);
+                    const rawRemoteMembers = data.members;
+                    if (currentRole === 'admin') {
+                      const proof = getSessionProofFromStorage();
+                      if (proof) {
+                        unlockSessionVault(firebaseConfig, 'admin', currentMember?.id || '10114-001', proof, rawRemoteMembers).then(piiMap => {
+                          if (piiMap && Object.keys(piiMap).length > 0) {
+                            unlockedPiiMapRef.current = { ...unlockedPiiMapRef.current, ...piiMap };
+                            setMembers(prev => normalizeMembersFromStorage(prev, unlockedPiiMapRef.current));
+                            setDraftMember(prev => {
+                              if (!prev) return prev;
+                              const dPii = unlockedPiiMapRef.current[prev.id];
+                              return dPii ? { ...prev, ...dPii } : prev;
+                            });
+                          }
+                        }).catch(e => console.warn('Snapshot admin vault sync warning:', e));
+                      }
+                    }
+                    const normalizedRemoteMembers = normalizeMembersFromStorage(rawRemoteMembers, unlockedPiiMapRef.current);
                     setMembers(normalizedRemoteMembers);
                     try { localStorage.setItem('frc10114_members', JSON.stringify(encodeMembersForStorage(normalizedRemoteMembers))); } catch (e) {}
                     setCurrentMember(prev => {
@@ -3489,7 +3527,27 @@
             });
           });
           return () => { cancelled = true; };
-        }, [isAuthenticated, currentRole, currentMember?.id, isFirebaseConnected]);
+        }, [isAuthenticated, currentRole, currentMember?.id, isFirebaseConnected, members.length]);
+
+        // Proactive Vault Scan when viewing Member Management tab as Admin
+        useEffect(() => {
+          if (activeTab === 'members' && currentRole === 'admin' && firebaseConfig && members.length > 0) {
+            const proof = getSessionProofFromStorage();
+            if (proof) {
+              unlockSessionVault(firebaseConfig, 'admin', currentMember?.id || '10114-001', proof, members).then(piiMap => {
+                if (piiMap && Object.keys(piiMap).length > 0) {
+                  unlockedPiiMapRef.current = { ...unlockedPiiMapRef.current, ...piiMap };
+                  setMembers(prev => normalizeMembersFromStorage(prev, unlockedPiiMapRef.current));
+                  setDraftMember(prev => {
+                    if (!prev) return prev;
+                    const dPii = unlockedPiiMapRef.current[prev.id];
+                    return dPii ? { ...prev, ...dPii } : prev;
+                  });
+                }
+              }).catch(e => console.warn('Tab switch vault sync warning:', e));
+            }
+          }
+        }, [activeTab, currentRole, firebaseConfig, members.length]);
 
         // Push state changes to Cloud Firestore with Granular Field Isolation & Atomic Smart Merge
         const syncToCloud = async (overrideData = null) => {
@@ -3626,7 +3684,8 @@
         useEffect(() => {
           const cur = members.find(m => m.id === selectedMemberId) || members[0];
           if (cur) {
-            setDraftMember({ ...cur, departments: [...cur.departments] });
+            const curPii = (unlockedPiiMapRef.current && unlockedPiiMapRef.current[cur.id]) ? unlockedPiiMapRef.current[cur.id] : {};
+            setDraftMember({ ...cur, ...curPii, departments: [...cur.departments] });
           }
         }, [selectedMemberId, members]);
 
@@ -4098,6 +4157,10 @@
             setIsUnsavedModalOpen(true);
           } else {
             setSelectedMemberId(nextId);
+            if (unlockedPiiMapRef.current[nextId]) {
+              const cachedPii = unlockedPiiMapRef.current[nextId];
+              setDraftMember(prev => prev && prev.id === nextId ? ({ ...prev, ...cachedPii }) : prev);
+            }
             if (currentRole === 'admin' && firebaseConfig && (!unlockedPiiMapRef.current[nextId] || !hasMemberPii(unlockedPiiMapRef.current[nextId]))) {
               fetchMemberVaultPii(firebaseConfig, nextId).then(pii => {
                 if (pii && Object.keys(pii).length > 0) {
@@ -4634,8 +4697,30 @@
           }
         };
 
-        const handleExportMembersList = () => {
+        const handleExportMembersList = async () => {
           if (currentRole !== 'admin') return;
+          let activePiiMap = { ...(unlockedPiiMapRef.current || {}) };
+          // Pre-flight vault synchronization: ensure all roster members are decrypted before generating CSV
+          if (firebaseConfig) {
+            try {
+              const proof = getSessionProofFromStorage();
+              if (proof) {
+                const piiMap = await unlockSessionVault(firebaseConfig, 'admin', currentMember?.id || '10114-001', proof, members);
+                if (piiMap && Object.keys(piiMap).length > 0) {
+                  activePiiMap = { ...activePiiMap, ...piiMap };
+                  unlockedPiiMapRef.current = activePiiMap;
+                  setMembers(prev => normalizeMembersFromStorage(prev, activePiiMap));
+                }
+              }
+            } catch (exportErr) {
+              console.warn('Pre-export vault sync warning:', exportErr);
+            }
+          }
+
+          const currentExportMembers = normalizeMembersFromStorage(members, activePiiMap).sort((a, b) =>
+            (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' })
+          );
+
           const headers = [
             '隊員編號 (學號)',
             '姓名',
@@ -4654,7 +4739,7 @@
             '系統身分',
             '座右銘/期許'
           ];
-          const rows = sortedMembers.map(m => [
+          const rows = currentExportMembers.map(m => [
             m.id || '',
             m.name || '',
             m.className || '',
@@ -4725,6 +4810,10 @@
           if (pendingSwitchMemberId) {
             const nextId = pendingSwitchMemberId;
             setSelectedMemberId(nextId);
+            if (unlockedPiiMapRef.current[nextId]) {
+              const cachedPii = unlockedPiiMapRef.current[nextId];
+              setDraftMember(prev => prev && prev.id === nextId ? ({ ...prev, ...cachedPii }) : prev);
+            }
             if (currentRole === 'admin' && firebaseConfig && (!unlockedPiiMapRef.current[nextId] || !hasMemberPii(unlockedPiiMapRef.current[nextId]))) {
               fetchMemberVaultPii(firebaseConfig, nextId).then(pii => {
                 if (pii && Object.keys(pii).length > 0) {
